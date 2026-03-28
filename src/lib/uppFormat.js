@@ -1,11 +1,5 @@
 import { BACKGROUND_PRESETS, FONT_OPTIONS } from "./upp.js";
 
-const PAIR_TITLES = {
-  bd: "b ve d",
-  pq: "p ve q",
-  mn: "m ve n",
-};
-
 /** @param {string|undefined} fontId */
 export function getFontLabel(fontId) {
   const f = FONT_OPTIONS.find((x) => x.id === fontId);
@@ -20,11 +14,12 @@ export function getBackgroundLabel(background) {
 }
 
 /**
- * @param {string|undefined} pairKey
- * @param {string|undefined} value — b|d|p|q|m|n|both|none
+ * Harf grubu özeti (başlık + kaydedilmiş değer).
+ * @param {string} groupTitle — örn. "p ve b (pe–be)"
+ * @param {string|undefined} value — harf | both | none
  */
-export function describeConfusionPair(pairKey, value) {
-  const title = pairKey ? PAIR_TITLES[pairKey] ?? pairKey : "";
+export function describeConfusionValue(groupTitle, value) {
+  const title = groupTitle || "";
   if (!value) return `${title}: kayıt yok`;
 
   if (value === "both")

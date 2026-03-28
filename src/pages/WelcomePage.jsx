@@ -44,21 +44,35 @@ export default function WelcomePage() {
         className="welcome-animate-in flex flex-col gap-3"
         style={{ animationDelay: STAGGER.actions }}
       >
-        <Link
-          to="/kalibrasyon"
-          className="rounded-2xl bg-emerald-700 px-5 py-4 text-center text-lg font-semibold text-white shadow-md shadow-emerald-900/15 outline-none ring-emerald-800 ring-offset-2 ring-offset-stone-100 transition hover:bg-emerald-800 focus-visible:ring-2 active:scale-[0.99]"
-        >
-          Testi Başlat
-        </Link>
-
         {hasProfile ? (
+          <>
+            <Link
+              to="/okuma"
+              className="rounded-2xl bg-emerald-700 px-5 py-4 text-center text-lg font-semibold text-white shadow-md shadow-emerald-900/15 outline-none ring-emerald-800 ring-offset-2 ring-offset-stone-100 transition hover:bg-emerald-800 focus-visible:ring-2 active:scale-[0.99]"
+            >
+              Okumaya Başla
+            </Link>
+            <Link
+              to="/yazma"
+              className="rounded-2xl bg-emerald-700 px-5 py-4 text-center text-lg font-semibold text-white shadow-md shadow-emerald-900/15 outline-none ring-emerald-800 ring-offset-2 ring-offset-stone-100 transition hover:bg-emerald-800 focus-visible:ring-2 active:scale-[0.99]"
+            >
+              Yazmaya Başla
+            </Link>
+            <Link
+              to="/kalibrasyon"
+              className="rounded-xl border-2 border-stone-300 bg-white px-4 py-3 text-center text-base font-semibold text-stone-800 outline-none ring-emerald-800 ring-offset-2 ring-offset-stone-100 transition hover:border-emerald-600 hover:bg-emerald-50 hover:text-emerald-900 focus-visible:ring-2 active:scale-[0.99]"
+            >
+              Testi Tekrar Et
+            </Link>
+          </>
+        ) : (
           <Link
-            to="/profil"
-            className="rounded-2xl border-2 border-emerald-800/40 bg-white px-5 py-4 text-center text-lg font-semibold text-emerald-900 outline-none ring-emerald-800 ring-offset-2 ring-offset-stone-100 transition hover:border-emerald-700 hover:bg-emerald-50 focus-visible:ring-2 active:scale-[0.99]"
+            to="/kalibrasyon"
+            className="rounded-2xl bg-emerald-700 px-5 py-4 text-center text-lg font-semibold text-white shadow-md shadow-emerald-900/15 outline-none ring-emerald-800 ring-offset-2 ring-offset-stone-100 transition hover:bg-emerald-800 focus-visible:ring-2 active:scale-[0.99]"
           >
-            Profilime Git
+            Testi Başlat
           </Link>
-        ) : null}
+        )}
       </div>
     </main>
   );

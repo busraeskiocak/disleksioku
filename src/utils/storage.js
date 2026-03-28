@@ -5,6 +5,8 @@
 
 export const STORAGE_KEYS = {
   UPP: "lexilens_upp",
+  /** Okuma sayfası: yüklenen / yapıştırılan metin geçmişi — ayrıntı için readingHistory.js */
+  READING_HISTORY: "lexilens_reading_history",
 };
 
 function parseJSON(raw, fallback = null) {

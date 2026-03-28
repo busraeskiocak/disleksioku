@@ -33,12 +33,19 @@ export function decodeUppFromParam(param) {
 export function looksLikeUpp(obj) {
   if (obj == null || typeof obj !== "object") return false;
   const o = /** @type {Record<string, unknown>} */ (obj);
-  return (
-    typeof o.version === "number" &&
-    typeof o.fontPreference === "string" &&
-    o.background != null &&
-    typeof o.background === "object"
-  );
+  if (
+    typeof o.fontPreference !== "string" ||
+    o.background == null ||
+    typeof o.background !== "object"
+  ) {
+    return false;
+  }
+  if (typeof o.version === "number" && o.version >= 2) {
+    return (
+      o.dyslexiaCalibration != null && typeof o.dyslexiaCalibration === "object"
+    );
+  }
+  return o.letterConfusion != null && typeof o.letterConfusion === "object";
 }
 
 /**

@@ -1,6 +1,6 @@
 /** LexiLens UPP (User Reading Profile) — kalibrasyon çıktısı */
 
-export const UPP_VERSION = 1;
+export const UPP_VERSION = 3;
 
 export const BACKGROUND_PRESETS = {
   cream: { id: "cream", label: "Krem", color: "#FFF8E7" },
@@ -27,23 +27,37 @@ export const FONT_OPTIONS = [
   },
 ];
 
-/** @typedef {{ bd?: string, pq?: string, mn?: string }} LetterConfusion */
-
 /**
  * @param {{
- *   letterConfusion: LetterConfusion,
+ *   dyslexiaCalibration: {
+ *     visual: Record<string, string>,
+ *     auditory: Record<string, string>,
+ *     vowel: Record<string, string>,
+ *     syllableQuiz: Array<{
+ *       word: string,
+ *       correctHyphenation: string,
+ *       optionsShown: string[],
+ *       correctIndex: number,
+ *       selectedIndex: number,
+ *       isCorrect: boolean,
+ *     }>,
+ *   },
  *   fontId: string,
  *   backgroundId: string,
  *   letterSpacingEm: number,
  *   lineHeight: number,
+ *   difficultWords?: string[],
+ *   cognitiveProfile?: unknown,
  * }} params
  */
 export function buildUpp({
-  letterConfusion,
+  dyslexiaCalibration,
+  cognitiveProfile,
   fontId,
   backgroundId,
   letterSpacingEm,
   lineHeight,
+  difficultWords = [],
 }) {
   const bg = BACKGROUND_PRESETS[backgroundId];
   if (!bg) throw new Error(`Geçersiz arka plan: ${backgroundId}`);
@@ -51,16 +65,14 @@ export function buildUpp({
   return {
     version: UPP_VERSION,
     createdAt: new Date().toISOString(),
-    letterConfusion: {
-      bd: letterConfusion.bd,
-      pq: letterConfusion.pq,
-      mn: letterConfusion.mn,
-    },
+    dyslexiaCalibration,
+    cognitiveProfile: cognitiveProfile ?? null,
     fontPreference: fontId,
     background: { id: bg.id, color: bg.color },
     typography: {
       letterSpacingEm,
       lineHeight,
     },
+    difficultWords: [...difficultWords],
   };
 }
