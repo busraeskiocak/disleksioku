@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+/* OpenDyslexic: main.jsx içinde @fontsource/opendyslexic */
+
+@theme {
+  /* @fontsource/opendyslexic — npm örneği: font-family: "OpenDyslexic" */
+  --font-sans: "OpenDyslexic", "Segoe UI", system-ui, sans-serif;
+}
+
+html {
+  font-family: var(--font-sans);
+}
+
+body {
+  @apply m-0 min-h-screen bg-stone-100 text-stone-900 antialiased;
+}
+
+#root {
+  @apply min-h-screen;
+}
+
+/* Karşılama: sade giriş animasyonu (Görev 2) */
+@keyframes welcome-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes welcome-soft-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+.welcome-animate-in {
+  opacity: 0;
+  animation: welcome-in 0.75s ease-out forwards;
+}
+
+.welcome-logo-float {
+  animation: welcome-soft-float 6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-animate-in {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .welcome-logo-float {
+    animation: none;
+  }
+}
