@@ -3,7 +3,7 @@
 Disleksili öğrenciler için AI destekli kişiselleştirilmiş okuma aracı.
 
 ## 🌐 Canlı Demo
-https://harmonious-beignet-8fb965.netlify.app
+https://lexilens.netlify.app
 
 ## 📹 Demo Video
 [Yakında eklenecek]
