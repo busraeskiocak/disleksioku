@@ -147,6 +147,170 @@ body {
   height: auto;
 }
 
+/* Mammoth: alt çizgi, italik, kalın zaten semantic; highlight (mark) */
+.word-editor-surface--rich u {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.word-editor-surface--rich mark {
+  padding: 0 0.08em;
+  border-radius: 0.15em;
+  background: rgba(250, 204, 21, 0.45);
+}
+
+.word-editor-surface--rich sup,
+.word-editor-surface--rich sub {
+  font-size: 0.75em;
+  line-height: 0;
+}
+
+.word-editor-surface--rich .docx-title {
+  font-size: 1.85em;
+  font-weight: 700;
+  margin: 0.35em 0 0.5em;
+  line-height: 1.15;
+}
+
+.word-editor-surface--rich .docx-subtitle {
+  font-size: 1.2em;
+  font-style: italic;
+  opacity: 0.92;
+  margin: 0 0 0.85em;
+}
+
+.word-editor-surface--rich h2.docx-toc-heading {
+  font-size: 1.35em;
+  margin: 1em 0 0.45em;
+}
+
+.word-editor-surface--rich h6.docx-heading-alt {
+  font-size: 1.05em;
+  margin: 0.9em 0 0.35em;
+}
+
+.word-editor-surface--rich .docx-list-paragraph {
+  margin-left: 0.35em;
+}
+
+.word-editor-surface--rich .docx-caption {
+  font-size: 0.9em;
+  font-style: italic;
+  text-align: center;
+  margin: 0.5em 0;
+}
+
+.word-editor-surface--rich blockquote.docx-quote {
+  margin: 0.85em 0;
+  padding: 0.4em 0 0.4em 1em;
+  border-left: 4px solid #a8a29e;
+}
+
+.word-editor-surface--rich blockquote.docx-quote.docx-quote-intense {
+  border-left-color: #57534e;
+  background: rgba(245, 245, 244, 0.65);
+}
+
+.word-editor-surface--rich .lexi-toc-line.lexi-toc-2 {
+  padding-left: 1rem;
+}
+.word-editor-surface--rich .lexi-toc-line.lexi-toc-3 {
+  padding-left: 1.75rem;
+}
+.word-editor-surface--rich .lexi-toc-line.lexi-toc-4 {
+  padding-left: 2.5rem;
+}
+.word-editor-surface--rich .lexi-toc-line.lexi-toc-5 {
+  padding-left: 3.25rem;
+}
+.word-editor-surface--rich .lexi-toc-line.lexi-toc-6 {
+  padding-left: 4rem;
+}
+.word-editor-surface--rich .lexi-toc-line.lexi-toc-7 {
+  padding-left: 4.75rem;
+}
+.word-editor-surface--rich .lexi-toc-line.lexi-toc-8 {
+  padding-left: 5.5rem;
+}
+.word-editor-surface--rich .lexi-toc-line.lexi-toc-9 {
+  padding-left: 6.25rem;
+}
+
+.word-editor-surface--rich .lexi-toc-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  gap: 0.35em;
+  margin: 0.12em 0;
+  min-height: 1.35em;
+}
+
+.word-editor-surface--rich .lexi-toc-title {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.word-editor-surface--rich .lexi-toc-leader {
+  flex: 1 1 auto;
+  min-width: 0.75em;
+  align-self: flex-end;
+  border-bottom: 1px dotted currentColor;
+  opacity: 0.55;
+  margin-bottom: 0.35em;
+  height: 0;
+}
+
+.word-editor-surface--rich .lexi-toc-page {
+  flex: 0 0 auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.word-editor-surface--rich table.lexi-docx-table {
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.word-editor-surface--rich table.lexi-docx-table td,
+.word-editor-surface--rich table.lexi-docx-table th {
+  border: 1px solid #78716c;
+  min-width: 2.5em;
+}
+
+/* Okuma: DOCX/HTML yakınlaştırma (layout genişliği scale ile telafi) */
+.lexi-reading-zoom-outer {
+  width: 100%;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.lexi-reading-zoom-inner {
+  transform: scale(var(--lexi-read-zoom, 1));
+  transform-origin: top center;
+  width: calc(100% / var(--lexi-read-zoom, 1));
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* PDF: canvas + metin katmanı + notlar; metin seçimi üstte kalsın */
+.pdf-reading-root .react-pdf__Page {
+  position: relative;
+}
+
+.pdf-reading-root .react-pdf__Page__canvas {
+  display: block;
+  margin: 0 auto;
+}
+
+.pdf-reading-root .textLayer {
+  z-index: 2;
+}
+
+.pdf-reading-root .annotationLayer {
+  z-index: 1;
+}
+
 /* Hunspell Türkçe: yalnızca sözlükte olmayan kelimeler (tarayıcı spellcheck kapalı) */
 .word-editor-surface .lexi-spell-unknown {
   text-decoration: underline wavy #dc2626;

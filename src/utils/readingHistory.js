@@ -123,6 +123,12 @@ export function updateReadingHistoryEntry(id, patch) {
   return true;
 }
 
+/** @param {string} id */
+export function removeReadingHistoryEntry(id) {
+  const next = getReadingHistory().filter((x) => x.id !== id);
+  setStorageJSON(KEY, next);
+}
+
 /** Başlık: metnin ilk 30 grapheme’i */
 export function titleFromTextSnippet(plain) {
   const t = plain.replace(/\s+/g, " ").trim();

@@ -24,6 +24,9 @@ const PDF_DOC_FALLBACK_ERR =
  *   immersiveReading: boolean,
  *   onDocumentLoad?: (numPages: number) => void,
  *   variant?: "personalized" | "original",
+ *   scale?: number,
+ *   renderAnnotationLayer?: boolean,
+ *   devicePixelRatio?: number,
  * }} props
  */
 export default function PdfReadingWorkbench({
@@ -32,6 +35,9 @@ export default function PdfReadingWorkbench({
   immersiveReading,
   onDocumentLoad,
   variant = "personalized",
+  scale: scaleProp,
+  renderAnnotationLayer = true,
+  devicePixelRatio: dprProp,
 }) {
   const [numPages, setNumPages] = useState(0);
   const [docErrorText, setDocErrorText] = useState(/** @type {string | null} */ (null));
@@ -56,7 +62,21 @@ export default function PdfReadingWorkbench({
     [letterMap]
   );
 
-  const scale = immersiveReading ? 1.28 : 1.06;
+  const fallbackScale = immersiveReading ? 1.28 : 1.06;
+  const scale =
+    typeof scaleProp === "number" && Number.isFinite(scaleProp) && scaleProp > 0
+      ? scaleProp
+      : fallbackScale;
+
+  const devicePixelRatio = useMemo(() => {
+    if (typeof dprProp === "number" && Number.isFinite(dprProp) && dprProp > 0) {
+      return Math.min(2.5, Math.max(0.5, dprProp));
+    }
+    if (typeof window !== "undefined" && window.devicePixelRatio) {
+      return Math.min(2, Math.max(1, window.devicePixelRatio));
+    }
+    return 1;
+  }, [dprProp]);
 
   const onLoadSuccess = useCallback(
     (doc) => {
@@ -107,13 +127,14 @@ export default function PdfReadingWorkbench({
         {Array.from({ length: numPages }, (_, i) => (
           <div
             key={`pdf-page-wrap-${i + 1}`}
-            className="mb-6 flex justify-center rounded-lg border border-stone-200 bg-stone-50 p-2 shadow-sm last:mb-0"
+            className="react-pdf__Page__outer mb-6 flex justify-center rounded-lg border border-stone-200 bg-stone-50 p-2 shadow-sm last:mb-0"
           >
             <Page
               pageNumber={i + 1}
               scale={scale}
+              devicePixelRatio={devicePixelRatio}
               renderTextLayer
-              renderAnnotationLayer={false}
+              renderAnnotationLayer={renderAnnotationLayer}
               customTextRenderer={isOriginal ? undefined : customTextRenderer}
               className="shadow-md"
               loading={

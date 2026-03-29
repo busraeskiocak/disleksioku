@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import FixedBackButton from "../components/FixedBackButton.jsx";
+import DocumentKebabMenu from "../components/DocumentKebabMenu.jsx";
 import WordLikeWorkbench from "../components/WordLikeWorkbench.jsx";
 import LoadingSpinner from "../components/LoadingSpinner.jsx";
 import { canBrowserGoBack } from "../utils/historyNav.js";
 import mammoth from "mammoth";
 import { isProbablyHtml } from "../lib/readingText.js";
 import { applyUppHighlightsToHtmlString } from "../lib/readingHtmlPostprocess.js";
+import { getMammothConvertOptions } from "../lib/mammothDocxOptions.js";
+import { enhanceMammothHtmlFragment } from "../lib/mammothHtmlEnhance.js";
 import {
   looksLikeOleLegacyDoc,
   looksLikeZipDocx,
@@ -125,6 +128,19 @@ export default function ReadingPage() {
     setLoadError(null);
   }, []);
 
+  const handleDeleteReadingDoc = useCallback(
+    (id) => {
+      removeReadingHistoryEntry(id);
+      refreshDocuments();
+      if (activeDocId === id) {
+        setActiveDocId(null);
+        setSourceText("");
+        setScreen("list");
+      }
+    },
+    [activeDocId, refreshDocuments]
+  );
+
   const runLoadFile = useCallback(
     async (kind, file) => {
       setLoadError(null);
@@ -192,10 +208,7 @@ export default function ReadingPage() {
           try {
             const result = await mammoth.convertToHtml(
               { arrayBuffer },
-              {
-                includeDefaultStyleMap: true,
-                ignoreEmptyParagraphs: false,
-              }
+              getMammothConvertOptions()
             );
             rawHtml = result.value ?? "";
           } catch (mErr) {
@@ -211,7 +224,7 @@ export default function ReadingPage() {
             return;
           }
 
-          const html = rawHtml.trim();
+          const html = enhanceMammothHtmlFragment(rawHtml.trim());
           if (!html) {
             console.error("[ReadingPage] DOCX boş HTML çıktısı", {
               fileName: file.name,
@@ -459,26 +472,32 @@ export default function ReadingPage() {
         <ul className="mt-4 flex flex-col gap-3">
           {documents.map((doc) => (
             <li key={doc.id}>
-              <button
-                type="button"
-                onClick={() => openReading(doc)}
-                className="w-full rounded-2xl border border-stone-200 bg-white p-4 text-left shadow-sm transition hover:border-emerald-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <h2 className="line-clamp-2 min-w-0 flex-1 text-base font-semibold text-stone-900">
-                    {doc.title}
-                  </h2>
-                  <span className="shrink-0 rounded-lg bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-700">
-                    {kindBadgeLabel(doc.kind)}
-                  </span>
-                </div>
-                <p className="mt-1.5 text-xs tabular-nums text-stone-500">
-                  {formatDocDate(doc.createdAt)}
-                </p>
-                <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-stone-600">
-                  {previewFromContent(doc.content, 120) || "—"}
-                </p>
-              </button>
+              <div className="flex items-stretch gap-1 rounded-2xl border border-stone-200 bg-white shadow-sm transition hover:border-emerald-400 hover:shadow-md">
+                <button
+                  type="button"
+                  onClick={() => openReading(doc)}
+                  className="min-w-0 flex-1 rounded-2xl p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <h2 className="line-clamp-2 min-w-0 flex-1 text-base font-semibold text-stone-900">
+                      {doc.title}
+                    </h2>
+                    <span className="shrink-0 rounded-lg bg-stone-100 px-2 py-0.5 text-xs font-semibold text-stone-700">
+                      {kindBadgeLabel(doc.kind)}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-xs tabular-nums text-stone-500">
+                    {formatDocDate(doc.createdAt)}
+                  </p>
+                  <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-stone-600">
+                    {previewFromContent(doc.content, 120) || "—"}
+                  </p>
+                </button>
+                <DocumentKebabMenu
+                  menuId={`reading-doc-menu-${doc.id}`}
+                  onDelete={() => handleDeleteReadingDoc(doc.id)}
+                />
+              </div>
             </li>
           ))}
         </ul>

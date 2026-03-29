@@ -17,6 +17,10 @@ import { plainTextToUppHighlightHtml } from "../lib/uppLetterHighlights.js";
 import {
   updateReadingHistoryEntry,
 } from "../utils/readingHistory.js";
+import {
+  appendWritingDocument,
+  updateWritingDocument,
+} from "../utils/writingHistory.js";
 import PdfReadingWorkbench from "./PdfReadingWorkbench.jsx";
 import {
   applyTurkishSpellMarks,
@@ -25,8 +29,6 @@ import {
   setCaretTextOffset,
   unwrapTurkishSpellMarks,
 } from "../lib/turkishSpell.js";
-
-const WRITING_STORAGE_KEY = "lexilens_writing_document";
 
 const FONT_SIZE_OPTIONS = [12, 14, 16, 18, 20, 24, 28, 32];
 
@@ -136,6 +138,58 @@ function keepEditorSelection(e) {
     if (t.closest("select")) return;
   }
   e.preventDefault();
+}
+
+const READING_ZOOM_MIN = 0.65;
+const READING_ZOOM_MAX = 2.5;
+const READING_ZOOM_DEFAULT = 1.1;
+const READING_ZOOM_STEP = 0.05;
+
+/** @param {{ zoom: number, children: import("react").ReactNode, className?: string }} p */
+function ReadingZoomWrap({ zoom, children, className = "" }) {
+  const z = Math.min(
+    READING_ZOOM_MAX,
+    Math.max(READING_ZOOM_MIN, Number.isFinite(zoom) ? zoom : READING_ZOOM_DEFAULT)
+  );
+  return (
+    <div
+      className={`lexi-reading-zoom-outer ${className}`.trim()}
+      style={{ "--lexi-read-zoom": String(z) }}
+    >
+      <div className="lexi-reading-zoom-inner">{children}</div>
+    </div>
+  );
+}
+
+/** @param {{ label: string, value: number, onChange: (n: number) => void, id: string }} p */
+function ReadingZoomSlider({ label, value, onChange, id }) {
+  const v = Math.min(
+    READING_ZOOM_MAX,
+    Math.max(READING_ZOOM_MIN, Number.isFinite(value) ? value : READING_ZOOM_DEFAULT)
+  );
+  return (
+    <label htmlFor={id} className="flex min-w-0 flex-1 items-center gap-2">
+      <span className="shrink-0 text-[10px] font-semibold text-stone-700 sm:text-xs">
+        {label}
+      </span>
+      <input
+        id={id}
+        type="range"
+        min={READING_ZOOM_MIN}
+        max={READING_ZOOM_MAX}
+        step={READING_ZOOM_STEP}
+        value={v}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="h-2 min-w-0 flex-1 accent-emerald-700"
+        aria-valuemin={READING_ZOOM_MIN}
+        aria-valuemax={READING_ZOOM_MAX}
+        aria-valuenow={v}
+      />
+      <span className="w-11 shrink-0 text-right text-[10px] tabular-nums text-stone-800 sm:text-xs">
+        {Math.round(v * 100)}%
+      </span>
+    </label>
+  );
 }
 
 function UndoIcon({ className }) {
@@ -259,6 +313,8 @@ function applyInlineStyleInEditor(editor, style) {
  *   compareOriginalBody?: string | null,
  *   documentId?: string | null,
  *   onReadingSaved?: () => void,
+ *   writingDocumentId?: string | null,
+ *   onWritingDocumentCommitted?: (id: string) => void,
  * }} props
  */
 export default function WordLikeWorkbench({
@@ -271,6 +327,8 @@ export default function WordLikeWorkbench({
   compareOriginalBody = null,
   documentId = null,
   onReadingSaved,
+  writingDocumentId = null,
+  onWritingDocumentCommitted,
 }) {
   const editorRef = useRef(null);
   /** Karşılaştırma layout'u editörü yeniden mount ettiğinde kişiselleştirilmiş HTML korunur */
@@ -301,6 +359,11 @@ export default function WordLikeWorkbench({
   /** Karşılaştır toggle'ında useLayoutEffect'in yalnızca gerçek geçişte çalışması için */
   const prevCompareSplitRef = useRef(compareSplit);
   const [pdfPageTotal, setPdfPageTotal] = useState(1);
+  const [readingZoomSingle, setReadingZoomSingle] = useState(READING_ZOOM_DEFAULT);
+  const [readingZoomCompareLeft, setReadingZoomCompareLeft] =
+    useState(READING_ZOOM_DEFAULT);
+  const [readingZoomCompareRight, setReadingZoomCompareRight] =
+    useState(READING_ZOOM_DEFAULT);
 
   const isPdfReading = mode === "reading" && readingDocKind === "pdf";
   const pdfFileBytes = useMemo(() => {
@@ -363,7 +426,15 @@ export default function WordLikeWorkbench({
     personalizedHtmlRef.current = "";
     prevCompareSplitRef.current = false;
     setCompareSplit(false);
+    setReadingZoomSingle(READING_ZOOM_DEFAULT);
+    setReadingZoomCompareLeft(READING_ZOOM_DEFAULT);
+    setReadingZoomCompareRight(READING_ZOOM_DEFAULT);
   }, [documentId, readingDocKind]);
+
+  const immersivePdfBoost = immersiveReading ? 1.08 : 1;
+  const pdfScaleSingle = readingZoomSingle * immersivePdfBoost;
+  const pdfScaleCompareLeft = readingZoomCompareLeft * immersivePdfBoost;
+  const pdfScaleCompareRight = readingZoomCompareRight * immersivePdfBoost;
 
   const uppBackgroundColor =
     upp?.background && typeof upp.background.color === "string"
@@ -746,16 +817,21 @@ export default function WordLikeWorkbench({
       }
     } else if (mode === "writing") {
       try {
-        localStorage.setItem(
-          WRITING_STORAGE_KEY,
-          JSON.stringify({
-            title: initialTitle.trim() || "Adsız belge",
-            html,
-            savedAt: new Date().toISOString(),
-          })
-        );
-        setSaveFlash(true);
-        window.setTimeout(() => setSaveFlash(false), 1200);
+        const title = initialTitle.trim() || "Adsız belge";
+        if (writingDocumentId) {
+          const ok = updateWritingDocument(writingDocumentId, { title, html });
+          if (ok) {
+            setSaveFlash(true);
+            window.setTimeout(() => setSaveFlash(false), 1200);
+          }
+        } else {
+          const id = appendWritingDocument({ title, html });
+          if (id) {
+            onWritingDocumentCommitted?.(id);
+            setSaveFlash(true);
+            window.setTimeout(() => setSaveFlash(false), 1200);
+          }
+        }
       } catch {
         /* quota */
       }
@@ -768,6 +844,8 @@ export default function WordLikeWorkbench({
     onReadingSaved,
     runTurkishSpell,
     readingDocKind,
+    writingDocumentId,
+    onWritingDocumentCommitted,
   ]);
 
   const updateCurrentPageFromScroll = useCallback(() => {
@@ -1050,7 +1128,7 @@ export default function WordLikeWorkbench({
       ) : null}
 
       {mode === "reading" && compareSplit && !immersiveReading ? (
-        <div className="flex min-h-0 flex-1 flex-row gap-2 overflow-hidden px-0.5 pt-40 pb-10 sm:pt-36 max-sm:min-h-0 max-sm:flex-col max-sm:overflow-y-auto">
+        <div className="flex min-h-0 flex-1 flex-row gap-2 overflow-hidden px-0.5 pt-40 pb-32 sm:pt-36 sm:pb-36 max-sm:min-h-0 max-sm:flex-col max-sm:overflow-y-auto">
           <section
             className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border-2 border-stone-400 bg-stone-200 shadow-md max-sm:max-h-[48dvh] max-sm:flex-none"
             aria-label="Orijinal belge"
@@ -1066,21 +1144,24 @@ export default function WordLikeWorkbench({
                     upp={upp}
                     immersiveReading={false}
                     variant="original"
+                    scale={pdfScaleCompareLeft}
                   />
                 </div>
               ) : (
                 <div className="p-3">
-                  <div
-                    className="word-editor-surface word-editor-surface--rich compare-original-pane select-text rounded-lg text-stone-900 outline-none"
-                    style={{
-                      fontFamily:
-                        'Times New Roman, Times, "Liberation Serif", serif',
-                      letterSpacing: 0,
-                      background: "#ffffff",
-                      color: "#1c1917",
-                    }}
-                    dangerouslySetInnerHTML={{ __html: compareLeftMarkup }}
-                  />
+                  <ReadingZoomWrap zoom={readingZoomCompareLeft} className="compare-original-pane">
+                    <div
+                      className="word-editor-surface word-editor-surface--rich select-text rounded-lg text-stone-900 outline-none"
+                      style={{
+                        fontFamily:
+                          'Times New Roman, Times, "Liberation Serif", serif',
+                        letterSpacing: 0,
+                        background: "#ffffff",
+                        color: "#1c1917",
+                      }}
+                      dangerouslySetInnerHTML={{ __html: compareLeftMarkup }}
+                    />
+                  </ReadingZoomWrap>
                 </div>
               )}
             </div>
@@ -1135,6 +1216,7 @@ export default function WordLikeWorkbench({
                         immersiveReading={false}
                         onDocumentLoad={setPdfPageTotal}
                         variant="personalized"
+                        scale={pdfScaleCompareRight}
                       />
                     ) : (
                       <p className="text-sm text-red-800" role="alert">
@@ -1142,65 +1224,67 @@ export default function WordLikeWorkbench({
                       </p>
                     )
                   ) : (
-                    <>
-                      {pageCount > 1
-                        ? Array.from({ length: pageCount - 1 }, (_, i) => (
-                            <div
-                              key={`cmp-page-gap-${i}`}
-                              aria-hidden
-                              className="pointer-events-none absolute right-0 left-0 z-[1] bg-stone-400"
-                              style={{
-                                top: `calc(${mm(25)} + ${(i + 1) * PAGE_SLICE_PX - PAGE_VISUAL_GAP_PX}px)`,
-                                height: PAGE_VISUAL_GAP_PX,
-                              }}
-                            />
-                          ))
-                        : null}
-                      <div
-                        ref={editorRef}
-                        contentEditable
-                        suppressContentEditableWarning
-                        role="textbox"
-                        aria-multiline
-                        aria-label="Kişiselleştirilmiş belge metni"
-                        lang="tr"
-                        spellCheck={false}
-                        onInput={() => {
-                          syncStats();
-                          refreshFormatState();
-                          scheduleTurkishSpell();
-                        }}
-                        className={`word-editor-surface relative z-[2] w-full max-w-full bg-transparent text-stone-900 outline-none ${
-                          isRichReadingHtml ? "word-editor-surface--rich " : ""
-                        } min-h-[calc(297mm-45mm)]`}
-                        style={{
-                          ...(isRichReadingHtml ? {} : { color: "#1c1917" }),
-                          ...(editorMask
-                            ? {
-                                WebkitMaskImage: editorMask,
-                                WebkitMaskRepeat: "no-repeat",
-                                WebkitMaskSize: `100% ${pageCount * PAGE_SLICE_PX}px`,
-                                maskImage: editorMask,
-                                maskRepeat: "no-repeat",
-                                maskSize: `100% ${pageCount * PAGE_SLICE_PX}px`,
-                              }
-                            : {}),
-                        }}
-                      />
-                      {pageCount > 1
-                        ? Array.from({ length: pageCount - 1 }, (_, i) => (
-                            <div
-                              key={`cmp-tail-${i}`}
-                              aria-hidden
-                              className="pointer-events-none absolute right-0 left-0 z-[3] bg-white"
-                              style={{
-                                top: `calc(${mm(25)} + ${(i + 1) * PAGE_SLICE_PX - PAGE_VISUAL_GAP_PX - PAGE_BREAK_MARGIN_PX}px)`,
-                                height: PAGE_BREAK_MARGIN_PX,
-                              }}
-                            />
-                          ))
-                        : null}
-                    </>
+                    <ReadingZoomWrap zoom={readingZoomCompareRight}>
+                      <>
+                        {pageCount > 1
+                          ? Array.from({ length: pageCount - 1 }, (_, i) => (
+                              <div
+                                key={`cmp-page-gap-${i}`}
+                                aria-hidden
+                                className="pointer-events-none absolute right-0 left-0 z-[1] bg-stone-400"
+                                style={{
+                                  top: `calc(${mm(25)} + ${(i + 1) * PAGE_SLICE_PX - PAGE_VISUAL_GAP_PX}px)`,
+                                  height: PAGE_VISUAL_GAP_PX,
+                                }}
+                              />
+                            ))
+                          : null}
+                        <div
+                          ref={editorRef}
+                          contentEditable
+                          suppressContentEditableWarning
+                          role="textbox"
+                          aria-multiline
+                          aria-label="Kişiselleştirilmiş belge metni"
+                          lang="tr"
+                          spellCheck={false}
+                          onInput={() => {
+                            syncStats();
+                            refreshFormatState();
+                            scheduleTurkishSpell();
+                          }}
+                          className={`word-editor-surface relative z-[2] w-full max-w-full bg-transparent text-stone-900 outline-none ${
+                            isRichReadingHtml ? "word-editor-surface--rich " : ""
+                          } min-h-[calc(297mm-45mm)]`}
+                          style={{
+                            ...(isRichReadingHtml ? {} : { color: "#1c1917" }),
+                            ...(editorMask
+                              ? {
+                                  WebkitMaskImage: editorMask,
+                                  WebkitMaskRepeat: "no-repeat",
+                                  WebkitMaskSize: `100% ${pageCount * PAGE_SLICE_PX}px`,
+                                  maskImage: editorMask,
+                                  maskRepeat: "no-repeat",
+                                  maskSize: `100% ${pageCount * PAGE_SLICE_PX}px`,
+                                }
+                              : {}),
+                          }}
+                        />
+                        {pageCount > 1
+                          ? Array.from({ length: pageCount - 1 }, (_, i) => (
+                              <div
+                                key={`cmp-tail-${i}`}
+                                aria-hidden
+                                className="pointer-events-none absolute right-0 left-0 z-[3] bg-white"
+                                style={{
+                                  top: `calc(${mm(25)} + ${(i + 1) * PAGE_SLICE_PX - PAGE_VISUAL_GAP_PX - PAGE_BREAK_MARGIN_PX}px)`,
+                                  height: PAGE_BREAK_MARGIN_PX,
+                                }}
+                              />
+                            ))
+                          : null}
+                      </>
+                    </ReadingZoomWrap>
                   )}
                 </div>
               </div>
@@ -1212,8 +1296,8 @@ export default function WordLikeWorkbench({
           ref={scrollAreaRef}
           className={
             immersiveReading
-              ? "flex min-h-0 flex-1 overflow-y-auto px-5 pb-10 pt-16 sm:px-12 sm:pt-20 md:px-20 md:py-12 lg:px-28 lg:py-16"
-              : "flex flex-1 overflow-y-auto pt-40 pb-10 sm:pt-36"
+              ? `flex min-h-0 flex-1 overflow-y-auto px-5 pt-16 sm:px-12 sm:pt-20 md:px-20 md:py-12 lg:px-28 lg:py-16 ${mode === "reading" ? "pb-24" : "pb-10"}`
+              : `flex flex-1 overflow-y-auto pt-40 sm:pt-36 ${mode === "reading" && !immersiveReading ? "pb-32 sm:pb-36" : "pb-10"}`
           }
           onScroll={updateCurrentPageFromScroll}
         >
@@ -1280,12 +1364,88 @@ export default function WordLikeWorkbench({
                     immersiveReading={immersiveReading}
                     onDocumentLoad={setPdfPageTotal}
                     variant="personalized"
+                    scale={pdfScaleSingle}
                   />
                 ) : (
                   <p className="text-sm text-red-800" role="alert">
                     PDF açılamadı veya kayıt bozuk.
                   </p>
                 )
+              ) : mode === "reading" ? (
+                <ReadingZoomWrap zoom={readingZoomSingle}>
+                  <>
+                    {!immersiveReading && pageCount > 1
+                      ? Array.from({ length: pageCount - 1 }, (_, i) => (
+                          <div
+                            key={`page-gap-${i}`}
+                            aria-hidden
+                            className="pointer-events-none absolute right-0 left-0 z-[1] bg-stone-400"
+                            style={{
+                              top: `calc(${mm(25)} + ${(i + 1) * PAGE_SLICE_PX - PAGE_VISUAL_GAP_PX}px)`,
+                              height: PAGE_VISUAL_GAP_PX,
+                            }}
+                          />
+                        ))
+                      : null}
+                    <div
+                      ref={editorRef}
+                      contentEditable={!immersiveReading}
+                      suppressContentEditableWarning
+                      role={immersiveReading ? "document" : "textbox"}
+                      aria-multiline={!immersiveReading}
+                      aria-readonly={immersiveReading}
+                      aria-label={
+                        immersiveReading
+                          ? "Okuma metni (salt okunur)"
+                          : "Belge metni"
+                      }
+                      lang="tr"
+                      spellCheck={false}
+                      onInput={
+                        immersiveReading
+                          ? undefined
+                          : () => {
+                              syncStats();
+                              refreshFormatState();
+                              scheduleTurkishSpell();
+                            }
+                      }
+                      className={`word-editor-surface relative z-[2] w-full max-w-full bg-transparent text-stone-900 outline-none ${
+                        isRichReadingHtml ? "word-editor-surface--rich " : ""
+                      }${
+                        immersiveReading
+                          ? "min-h-[50vh] select-text"
+                          : "min-h-[calc(297mm-45mm)]"
+                      }`}
+                      style={{
+                        ...(isRichReadingHtml ? {} : { color: "#1c1917" }),
+                        ...(editorMask
+                          ? {
+                              WebkitMaskImage: editorMask,
+                              WebkitMaskRepeat: "no-repeat",
+                              WebkitMaskSize: `100% ${pageCount * PAGE_SLICE_PX}px`,
+                              maskImage: editorMask,
+                              maskRepeat: "no-repeat",
+                              maskSize: `100% ${pageCount * PAGE_SLICE_PX}px`,
+                            }
+                          : {}),
+                      }}
+                    />
+                    {!immersiveReading && pageCount > 1
+                      ? Array.from({ length: pageCount - 1 }, (_, i) => (
+                          <div
+                            key={`page-tail-margin-${i}`}
+                            aria-hidden
+                            className="pointer-events-none absolute right-0 left-0 z-[3] bg-white"
+                            style={{
+                              top: `calc(${mm(25)} + ${(i + 1) * PAGE_SLICE_PX - PAGE_VISUAL_GAP_PX - PAGE_BREAK_MARGIN_PX}px)`,
+                              height: PAGE_BREAK_MARGIN_PX,
+                            }}
+                          />
+                        ))
+                      : null}
+                  </>
+                </ReadingZoomWrap>
               ) : (
                 <>
                   {!immersiveReading && pageCount > 1
@@ -1365,6 +1525,53 @@ export default function WordLikeWorkbench({
         </div>
       )}
 
+      {mode === "reading" && !immersiveReading ? (
+        <div
+          role="region"
+          aria-label="Görünüm yakınlaştırma"
+          className="fixed bottom-9 left-0 right-0 z-[54] flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-stone-400 bg-stone-200/95 px-3 py-2 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] backdrop-blur-sm supports-[backdrop-filter]:bg-stone-200/85"
+        >
+          {compareSplit ? (
+            <>
+              <ReadingZoomSlider
+                label="Orijinal"
+                value={readingZoomCompareLeft}
+                onChange={setReadingZoomCompareLeft}
+                id="lexi-zoom-compare-left"
+              />
+              <ReadingZoomSlider
+                label="Profil"
+                value={readingZoomCompareRight}
+                onChange={setReadingZoomCompareRight}
+                id="lexi-zoom-compare-right"
+              />
+            </>
+          ) : (
+            <ReadingZoomSlider
+              label="Görünüm"
+              value={readingZoomSingle}
+              onChange={setReadingZoomSingle}
+              id="lexi-zoom-single"
+            />
+          )}
+        </div>
+      ) : null}
+
+      {immersiveReading && mode === "reading" ? (
+        <div
+          role="region"
+          aria-label="Yakınlaştırma"
+          className="fixed bottom-4 left-1/2 z-[130] w-[min(94vw,28rem)] -translate-x-1/2 rounded-xl border border-stone-400/80 bg-white/95 px-3 py-2 shadow-lg backdrop-blur-sm"
+        >
+          <ReadingZoomSlider
+            label="Boyut"
+            value={readingZoomSingle}
+            onChange={setReadingZoomSingle}
+            id="lexi-zoom-immersive"
+          />
+        </div>
+      ) : null}
+
       {!immersiveReading ? (
         <footer className="fixed bottom-0 left-0 right-0 z-[55] flex h-9 items-center justify-between gap-3 border-t border-stone-500 bg-stone-700 px-3 text-xs text-stone-100 sm:text-sm">
           <span className="tabular-nums">
@@ -1385,19 +1592,4 @@ export default function WordLikeWorkbench({
       ) : null}
     </div>
   );
-}
-
-export function loadWritingDocumentFromStorage() {
-  try {
-    const raw = localStorage.getItem(WRITING_STORAGE_KEY);
-    if (!raw) return null;
-    const o = JSON.parse(raw);
-    if (!o || typeof o.html !== "string") return null;
-    return {
-      title: typeof o.title === "string" ? o.title : "Adsız belge",
-      html: o.html,
-    };
-  } catch {
-    return null;
-  }
 }
