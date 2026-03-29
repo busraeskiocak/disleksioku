@@ -14,6 +14,20 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * UPP renklendirmesi olmadan düz metin → <p> HTML (karşılaştırma sol paneli).
+ * @param {string} text
+ */
+export function plainTextToNeutralParagraphHtml(text) {
+  const lines = (text ?? "").split(/\r?\n/);
+  return lines
+    .map((line) => {
+      if (line === "") return "<p><br></p>";
+      return `<p>${escapeHtml(line)}</p>`;
+    })
+    .join("");
+}
+
 /** b=mavi, d=kırmızı, p=turuncu, q=mor (Görev 5) */
 export const READING_LETTER_COLORS = {
   b: "#1d4ed8",

@@ -2,10 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import FixedBackButton from "../components/FixedBackButton.jsx";
 import WordLikeWorkbench from "../components/WordLikeWorkbench.jsx";
+import LoadingSpinner from "../components/LoadingSpinner.jsx";
 import { canBrowserGoBack } from "../utils/historyNav.js";
-import { pdfjs } from "react-pdf";
 import mammoth from "mammoth";
 import { isProbablyHtml } from "../lib/readingText.js";
+import { applyUppHighlightsToHtmlString } from "../lib/readingHtmlPostprocess.js";
+import {
+  looksLikeOleLegacyDoc,
+  looksLikeZipDocx,
+} from "../lib/docxSniff.js";
+import { probePdfBuffer } from "../lib/probePdfBuffer.js";
+import { turkishPdfUserMessage } from "../lib/pdfLoadMessages.js";
+import {
+  encodePdfArrayBufferToStoredContent,
+  isPdfStoredContent,
+} from "../lib/readingPdfStorage.js";
 import { getUpp } from "../utils/storage.js";
 import {
   appendReadingHistoryEntry,
@@ -14,31 +25,9 @@ import {
   titleFromTextSnippet,
 } from "../utils/readingHistory.js";
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  "pdfjs-dist/build/pdf.worker.min.mjs",
-  import.meta.url
-).toString();
-
-async function extractPdfPlainText(file) {
-  const data = await file.arrayBuffer();
-  const pdf = await pdfjs.getDocument({ data }).promise;
-  const chunks = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const tc = await page.getTextContent();
-    const strings = tc.items
-      .map((item) => ("str" in item ? item.str : ""))
-      .filter(Boolean);
-    chunks.push(strings.join(" "));
-  }
-  return chunks.join("\n\n").trim();
-}
-
-async function extractDocxPlainText(file) {
-  const arrayBuffer = await file.arrayBuffer();
-  const result = await mammoth.extractRawText({ arrayBuffer });
-  return result.value.trim();
-}
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const DOCX_FAIL_MSG =
+  "DOCX dosyası okunamadı, lütfen başka bir dosya deneyin";
 
 function formatDocDate(iso) {
   try {
@@ -78,7 +67,11 @@ export default function ReadingPage() {
   const [sheetEntered, setSheetEntered] = useState(false);
 
   const [loadKind, setLoadKind] = useState("");
-  const [loadError, setLoadError] = useState(null);
+  const [loadError, setLoadError] = useState(/** @type {string | null} */ (null));
+  const retryLoadRef = useRef(
+    /** @type {{ kind: 'pdf' | 'docx', file: File } | null} */ (null)
+  );
+  const [showRetryButton, setShowRetryButton] = useState(false);
 
   const refreshDocuments = useCallback(() => {
     setDocuments(getReadingHistory());
@@ -117,6 +110,14 @@ export default function ReadingPage() {
     if (screen === "list") refreshDocuments();
   }, [screen, refreshDocuments]);
 
+  const activeDoc = useMemo(
+    () =>
+      activeDocId
+        ? documents.find((d) => d.id === activeDocId) ?? null
+        : null,
+    [documents, activeDocId]
+  );
+
   const openReading = useCallback((item) => {
     setSourceText(item.content);
     setActiveDocId(item.id);
@@ -127,37 +128,155 @@ export default function ReadingPage() {
   const runLoadFile = useCallback(
     async (kind, file) => {
       setLoadError(null);
+      setShowRetryButton(false);
+      retryLoadRef.current = null;
       setLoadKind(kind);
       try {
-        const text =
-          kind === "pdf" ? await extractPdfPlainText(file) : await extractDocxPlainText(file);
-        if (!text.trim()) {
-          setLoadError("Dosyadan metin çıkarılamadı.");
+        if (file.size > MAX_UPLOAD_BYTES) {
+          console.error("[ReadingPage] Dosya çok büyük", {
+            name: file.name,
+            size: file.size,
+            max: MAX_UPLOAD_BYTES,
+          });
+          setLoadError("Dosya çok büyük, 10MB altı dosya yükleyin");
           return;
         }
-        const newId = appendReadingHistoryEntry({
-          kind: kind === "pdf" ? "pdf" : "docx",
-          title: file.name,
-          content: text,
-        });
+
+        const arrayBuffer = await file.arrayBuffer();
+
+        let content = "";
+        /** @type {string | null} */
+        let docxHtmlOriginal = null;
+        if (kind === "pdf") {
+          const probed = await probePdfBuffer(arrayBuffer);
+          if (!probed.ok) {
+            const reason =
+              probed.reason === "unknown" ? "invalid" : probed.reason;
+            const msg = turkishPdfUserMessage(reason);
+            console.error("[ReadingPage] PDF doğrulama başarısız", {
+              fileName: file.name,
+              reason: probed.reason,
+              message: msg,
+            });
+            setLoadError(msg);
+            retryLoadRef.current = { kind, file };
+            setShowRetryButton(true);
+            return;
+          }
+
+          const encoded = encodePdfArrayBufferToStoredContent(arrayBuffer);
+          if (encoded == null || encoded.length < 72) {
+            console.error("[ReadingPage] PDF saklama / kodlama hatası", {
+              fileName: file.name,
+              encodedLen: encoded?.length,
+            });
+            setLoadError(turkishPdfUserMessage("empty"));
+            retryLoadRef.current = { kind, file };
+            setShowRetryButton(true);
+            return;
+          }
+          content = encoded;
+        } else {
+          if (
+            looksLikeOleLegacyDoc(arrayBuffer) &&
+            !looksLikeZipDocx(arrayBuffer)
+          ) {
+            console.error("[ReadingPage] Eski .doc biçimi algılandı", {
+              fileName: file.name,
+            });
+            setLoadError("Lütfen .docx formatında yükleyin");
+            return;
+          }
+
+          let rawHtml = "";
+          try {
+            const result = await mammoth.convertToHtml(
+              { arrayBuffer },
+              {
+                includeDefaultStyleMap: true,
+                ignoreEmptyParagraphs: false,
+              }
+            );
+            rawHtml = result.value ?? "";
+          } catch (mErr) {
+            console.error("[ReadingPage] mammoth.convertToHtml hatası", {
+              fileName: file.name,
+              error: mErr,
+              message: /** @type {Error} */ (mErr)?.message,
+              stack: /** @type {Error} */ (mErr)?.stack,
+            });
+            setLoadError(DOCX_FAIL_MSG);
+            retryLoadRef.current = { kind, file };
+            setShowRetryButton(true);
+            return;
+          }
+
+          const html = rawHtml.trim();
+          if (!html) {
+            console.error("[ReadingPage] DOCX boş HTML çıktısı", {
+              fileName: file.name,
+            });
+            setLoadError(DOCX_FAIL_MSG);
+            retryLoadRef.current = { kind, file };
+            setShowRetryButton(true);
+            return;
+          }
+
+          docxHtmlOriginal = html;
+          content = applyUppHighlightsToHtmlString(html, upp);
+        }
+
+        const newId = appendReadingHistoryEntry(
+          kind === "docx" && docxHtmlOriginal
+            ? {
+                kind: "docx",
+                title: file.name,
+                content,
+                originalContent: docxHtmlOriginal,
+              }
+            : {
+                kind: kind === "pdf" ? "pdf" : "docx",
+                title: file.name,
+                content,
+              }
+        );
         refreshDocuments();
         if (newId) {
-          setSourceText(text);
+          setSourceText(content);
           setActiveDocId(newId);
           setScreen("reading");
+        } else {
+          console.error("[ReadingPage] Geçmişe kayıt eklenemedi", {
+            fileName: file.name,
+            kind,
+            contentLength: content?.length,
+          });
+          setLoadError(
+            kind === "pdf"
+              ? turkishPdfUserMessage("invalid")
+              : DOCX_FAIL_MSG
+          );
+          retryLoadRef.current = { kind, file };
+          setShowRetryButton(true);
         }
       } catch (e) {
-        console.error(e);
+        console.error("[ReadingPage] runLoadFile beklenmeyen hata", {
+          kind,
+          fileName: file.name,
+          error: e,
+          message: /** @type {Error} */ (e)?.message,
+          stack: /** @type {Error} */ (e)?.stack,
+        });
         setLoadError(
-          kind === "pdf"
-            ? "PDF okunamadı. Dosya bozuk veya şifreli olabilir."
-            : "DOCX okunamadı. Dosyayı kontrol edin."
+          kind === "pdf" ? turkishPdfUserMessage("invalid") : DOCX_FAIL_MSG
         );
+        retryLoadRef.current = { kind, file };
+        setShowRetryButton(true);
       } finally {
         setLoadKind("");
       }
     },
-    [refreshDocuments]
+    [refreshDocuments, upp]
   );
 
   const onPickDocument = useCallback(
@@ -165,17 +284,45 @@ export default function ReadingPage() {
       const file = e.target.files?.[0];
       e.target.value = "";
       if (!file) return;
+
+      if (file.size > MAX_UPLOAD_BYTES) {
+        console.error("[ReadingPage] Dosya çok büyük (seçim)", {
+          name: file.name,
+          size: file.size,
+        });
+        setLoadError("Dosya çok büyük, 10MB altı dosya yükleyin");
+        setShowRetryButton(false);
+        retryLoadRef.current = null;
+        return;
+      }
+
       const lower = file.name.toLowerCase();
-      if (lower.endsWith(".pdf")) {
-        runLoadFile("pdf", file);
-      } else if (lower.endsWith(".docx")) {
+      if (lower.endsWith(".docx")) {
         runLoadFile("docx", file);
+      } else if (lower.endsWith(".pdf")) {
+        runLoadFile("pdf", file);
+      } else if (lower.endsWith(".doc") && !lower.endsWith(".docx")) {
+        console.error("[ReadingPage] .doc uzantısı reddedildi", {
+          name: file.name,
+        });
+        setLoadError("Lütfen .docx formatında yükleyin");
+        setShowRetryButton(false);
+        retryLoadRef.current = null;
       } else {
+        console.error("[ReadingPage] Geçersiz dosya türü", { name: file.name });
         setLoadError("Lütfen PDF veya DOCX dosyası seçin.");
+        setShowRetryButton(false);
+        retryLoadRef.current = null;
       }
     },
     [runLoadFile]
   );
+
+  const handleRetryLoad = useCallback(() => {
+    const payload = retryLoadRef.current;
+    if (!payload) return;
+    runLoadFile(payload.kind, payload.file);
+  }, [runLoadFile]);
 
   const saveSheetAndRead = useCallback(() => {
     const text = sheetDraft.trim();
@@ -188,6 +335,7 @@ export default function ReadingPage() {
       kind: "text",
       title: titleFromTextSnippet(text),
       content: text,
+      originalContent: text,
     });
     refreshDocuments();
     if (newId) {
@@ -246,7 +394,11 @@ export default function ReadingPage() {
           mode="reading"
           initialTitle={activeTitle}
           initialBody={sourceText}
-          colorizePlainOnLoad={!isProbablyHtml(sourceText)}
+          compareOriginalBody={activeDoc?.originalContent ?? null}
+          colorizePlainOnLoad={
+            !isPdfStoredContent(sourceText) && !isProbablyHtml(sourceText)
+          }
+          readingDocKind={activeDoc?.kind === "pdf" ? "pdf" : undefined}
           documentId={activeDocId}
           onReadingSaved={handleReadingSaved}
         />
@@ -264,13 +416,36 @@ export default function ReadingPage() {
       </header>
 
       {loadError ? (
-        <p className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-          {loadError}
-        </p>
+        <div
+          className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
+          role="alert"
+        >
+          <p>{loadError}</p>
+          {showRetryButton ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleRetryLoad}
+              className="mt-3 rounded-lg bg-red-900 px-3 py-2 text-xs font-semibold text-white hover:bg-red-950 disabled:opacity-50"
+            >
+              Tekrar Dene
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {busy ? (
-        <p className="mb-4 text-sm font-medium text-emerald-800">Belge işleniyor…</p>
+        <div className="mb-4">
+          <LoadingSpinner
+            label={
+              loadKind === "pdf"
+                ? "PDF doğrulanıyor ve işleniyor…"
+                : loadKind === "docx"
+                  ? "DOCX dönüştürülüyor…"
+                  : "Belge işleniyor…"
+            }
+          />
+        </div>
       ) : null}
 
       {documents.length === 0 ? (

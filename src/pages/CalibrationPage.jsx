@@ -89,7 +89,7 @@ export default function CalibrationPage() {
   const [wm, setWm] = useState(() => ({
     trials: generateWorkingMemoryTrials(),
     trialIndex: 0,
-    phase: "show",
+    phase: /** @type {"ready" | "show" | "input"} */ ("ready"),
     results: [],
   }));
   const [wmInput, setWmInput] = useState("");
@@ -102,6 +102,10 @@ export default function CalibrationPage() {
     pickRandomParagraphs(PARAGRAPH_POOL, 5)
   );
   const [markedWordKeys, setMarkedWordKeys] = useState([]);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [step]);
 
   const visualComplete = useMemo(
     () => VISUAL_GROUPS.every((g) => visual[g.key] != null),
@@ -801,36 +805,63 @@ export default function CalibrationPage() {
           </div>
           {!wmComplete ? (
             <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-              <p className="text-sm text-stone-600">
-                Deneme {wm.trialIndex + 1} / {wm.trials.length}
-              </p>
-              {wm.phase === "show" ? (
-                <div className="mt-8 flex min-h-[5rem] items-center justify-center rounded-xl bg-stone-100 py-8">
-                  <p className="text-center text-3xl font-bold tracking-widest text-stone-900">
-                    {wm.trials[wm.trialIndex]?.display}
+              {wm.phase === "ready" ? (
+                <div className="space-y-4">
+                  <h3 className="text-xl font-semibold text-stone-900">
+                    Hazır mısın?
+                  </h3>
+                  <p className="text-sm leading-relaxed text-stone-700">
+                    Sana birkaç harf göstereceğim. Harfleri sırayla hatırlamaya
+                    çalış.
                   </p>
-                </div>
-              ) : (
-                <div className="mt-6">
-                  <label className="block text-sm font-medium text-stone-800">
-                    Harfleri sırayla yazın
-                  </label>
-                  <input
-                    type="text"
-                    autoCapitalize="characters"
-                    autoComplete="off"
-                    value={wmInput}
-                    onChange={(e) => setWmInput(e.target.value)}
-                    className="mt-2 w-full rounded-xl border border-stone-300 px-4 py-3 text-lg outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/30"
-                  />
                   <button
                     type="button"
-                    onClick={submitWorkingMemory}
-                    className="mt-4 w-full rounded-xl bg-emerald-700 py-3 text-base font-semibold text-white"
+                    onClick={() =>
+                      setWm((prev) =>
+                        prev.phase === "ready"
+                          ? { ...prev, phase: "show" }
+                          : prev
+                      )
+                    }
+                    className="w-full rounded-xl bg-emerald-700 py-3 text-base font-semibold text-white shadow-sm transition hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
                   >
-                    Gönder
+                    Başla
                   </button>
                 </div>
+              ) : (
+                <>
+                  <p className="text-sm text-stone-600">
+                    Deneme {wm.trialIndex + 1} / {wm.trials.length}
+                  </p>
+                  {wm.phase === "show" ? (
+                    <div className="mt-8 flex min-h-[5rem] items-center justify-center rounded-xl bg-stone-100 py-8">
+                      <p className="text-center text-3xl font-bold tracking-widest text-stone-900">
+                        {wm.trials[wm.trialIndex]?.display}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="mt-6">
+                      <label className="block text-sm font-medium text-stone-800">
+                        Harfleri sırayla yazın
+                      </label>
+                      <input
+                        type="text"
+                        autoCapitalize="characters"
+                        autoComplete="off"
+                        value={wmInput}
+                        onChange={(e) => setWmInput(e.target.value)}
+                        className="mt-2 w-full rounded-xl border border-stone-300 px-4 py-3 text-lg outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/30"
+                      />
+                      <button
+                        type="button"
+                        onClick={submitWorkingMemory}
+                        className="mt-4 w-full rounded-xl bg-emerald-700 py-3 text-base font-semibold text-white"
+                      >
+                        Gönder
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           ) : (

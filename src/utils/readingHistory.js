@@ -1,4 +1,5 @@
 import { stripHtmlToPlainText } from "../lib/readingText.js";
+import { isPdfStoredContent } from "../lib/readingPdfStorage.js";
 import { getStorageJSON, setStorageJSON, STORAGE_KEYS } from "./storage.js";
 
 const KEY = STORAGE_KEYS.READING_HISTORY;
@@ -6,7 +7,7 @@ const MAX_ITEMS = 60;
 
 /**
  * @typedef {'pdf' | 'docx' | 'text'} ReadingHistoryKind
- * @typedef {{ id: string, kind: ReadingHistoryKind, title: string, content: string, createdAt: string }} ReadingHistoryItem
+ * @typedef {{ id: string, kind: ReadingHistoryKind, title: string, content: string, createdAt: string, originalContent?: string }} ReadingHistoryItem
  */
 
 /** Eski kayıtlar için */
@@ -31,13 +32,19 @@ function normalizeStoredItem(x) {
   if (!VALID_KINDS.has(k)) return null;
   /** @type {ReadingHistoryKind} */
   const kind = k === "paste" ? "text" : /** @type {ReadingHistoryKind} */ (k);
-  return {
+  /** @type {ReadingHistoryItem} */
+  const item = {
     id: x.id,
     kind,
     title: x.title,
     content: x.content,
     createdAt: x.createdAt,
   };
+  if (typeof x.originalContent === "string") {
+    const o = x.originalContent.trim();
+    if (o) item.originalContent = o;
+  }
+  return item;
 }
 
 /** @returns {ReadingHistoryItem[]} */
@@ -54,6 +61,7 @@ export function getReadingHistory() {
 
 /** @param {string} raw */
 function hasTextContent(raw) {
+  if (isPdfStoredContent(raw)) return raw.length > 64;
   return stripHtmlToPlainText(raw).trim().length > 0;
 }
 
@@ -78,6 +86,10 @@ export function appendReadingHistoryEntry(entry) {
     content,
     createdAt,
   };
+  if (typeof entry.originalContent === "string") {
+    const o = entry.originalContent.trim();
+    if (o) item.originalContent = o;
+  }
 
   const prev = getReadingHistory();
   const next = [item, ...prev.filter((p) => p.id !== id)].slice(0, MAX_ITEMS);
@@ -123,6 +135,9 @@ export function titleFromTextSnippet(plain) {
 
 /** Kart önizlemesi */
 export function previewFromContent(content, maxLen = 100) {
+  if (isPdfStoredContent(content)) {
+    return "PDF — sayfa görüntüsü olarak açılır";
+  }
   const plain = stripHtmlToPlainText(content).replace(/\s+/g, " ").trim();
   if (!plain) return "";
   const chars = [...plain];
