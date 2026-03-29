@@ -306,24 +306,20 @@ body {
   width: 100%;
 }
 
-/* Okuma: yakınlaştırma yalnızca sayfa kutusunu ölçekler (transform); punto CSS ile değişmez */
+/* Okuma: DOCX/HTML yakınlaştırma (layout genişliği scale ile telafi) */
 .lexi-reading-zoom-outer {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
   width: 100%;
   max-width: 100%;
   overflow: visible;
-  box-sizing: border-box;
 }
 
 .lexi-reading-zoom-inner {
-  width: 210mm;
-  max-width: 100%;
-  flex-shrink: 0;
   transform: scale(var(--lexi-read-zoom, 1));
   transform-origin: top center;
-  box-sizing: border-box;
+  width: calc(100% / var(--lexi-read-zoom, 1));
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* Karşılaştırma: sayfa bandında paragraf / tablo satırı bölünmesini azalt */
