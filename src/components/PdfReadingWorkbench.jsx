@@ -44,6 +44,7 @@ function isPdfTextRenderItem(item) {
  *   onDocumentLoad?: (numPages: number) => void,
  *   variant?: "personalized" | "original",
  *   scale?: number,
+ *   pageWidth?: number,
  *   devicePixelRatio?: number,
  * }} props
  */
@@ -54,6 +55,7 @@ export default function PdfReadingWorkbench({
   onDocumentLoad,
   variant = "personalized",
   scale: scaleProp,
+  pageWidth,
   devicePixelRatio: dprProp,
 }) {
   const [numPages, setNumPages] = useState(0);
@@ -159,6 +161,8 @@ export default function PdfReadingWorkbench({
   const rootClass = isOriginal
     ? "pdf-reading-root pdf-reading-root--original w-full max-w-full space-y-4"
     : "pdf-reading-root w-full max-w-full space-y-4";
+  const isWordScannerOriginal =
+    isOriginal && typeof pageWidth === "number" && pageWidth > 0;
 
   return (
     <div className={rootClass} style={{ fontFamily: fontStack }}>
@@ -182,8 +186,9 @@ export default function PdfReadingWorkbench({
               <div className="relative inline-block max-w-full">
                 <Page
                   pageNumber={pageNo}
-                  scale={scale}
-                  devicePixelRatio={devicePixelRatio}
+                  width={typeof pageWidth === "number" && pageWidth > 0 ? pageWidth : undefined}
+                  scale={isWordScannerOriginal ? undefined : scale}
+                  devicePixelRatio={isWordScannerOriginal ? undefined : devicePixelRatio}
                   renderTextLayer
                   renderAnnotationLayer={false}
                   onGetTextSuccess={(tc) => {
