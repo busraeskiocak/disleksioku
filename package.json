@@ -14,6 +14,7 @@
     "@fontsource/opendyslexic": "^5.2.5",
     "dictionary-tr": "^2.0.0",
     "mammoth": "^1.12.0",
+    "pdfjs-dist": "5.4.296",
     "nspell": "^2.1.5",
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",

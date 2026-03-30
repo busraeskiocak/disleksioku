@@ -6,13 +6,17 @@ import {
   useRef,
   useState,
 } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { canBrowserGoBack } from "../utils/historyNav.js";
 import {
   isProbablyHtml,
   plainTextToNeutralParagraphHtml,
   stripHtmlToPlainText,
 } from "../lib/readingText.js";
-import { decodeStoredContentToPdfBytes, isPdfStoredContent } from "../lib/readingPdfStorage.js";
+import {
+  createPdfStoredContentSliceReader,
+  isPdfStoredContent,
+} from "../lib/readingPdfStorage.js";
 import { plainTextToUppHighlightHtml } from "../lib/uppLetterHighlights.js";
 import {
   updateReadingHistoryEntry,
@@ -149,6 +153,39 @@ function readingPageLayoutPx(zoom) {
   const innerH = PAGE_INNER_H_PX * z;
   const padTop = mmToPx(PAGE_MARGIN_TOP_MM) * z;
   const padLR = mmToPx(PAGE_MARGIN_LR_MM) * z;
+  const stackStride = sheetH + gapPx;
+  const interBreak = sheetH + gapPx - innerH;
+  return {
+    z,
+    sheetW,
+    sheetH,
+    gapPx,
+    innerW,
+    innerH,
+    padTop,
+    padLR,
+    stackStride,
+    interBreak,
+  };
+}
+
+/**
+ * Karşılaştırma HTML: yalnızca sayfa/kutu genişliği zoom ile çarpılır.
+ * Dikey ölçüler ve mm tabanlı iç boşluklar sabit kalır (yazı boyutu zoom’dan etkilenmez).
+ * @param {number} zoom
+ */
+function readingComparePanelLayoutPx(zoom) {
+  const z = Math.min(
+    DOC_ZOOM_MAX,
+    Math.max(DOC_ZOOM_MIN, Number.isFinite(zoom) ? zoom : DOC_ZOOM_DEFAULT)
+  );
+  const sheetW = mmToPx(A4_MM_W) * z;
+  const innerW = PAGE_INNER_W_PX * z;
+  const sheetH = PAGE_SHEET_H_PX;
+  const gapPx = PAGE_GAP_PX;
+  const innerH = PAGE_INNER_H_PX;
+  const padTop = mmToPx(PAGE_MARGIN_TOP_MM);
+  const padLR = mmToPx(PAGE_MARGIN_LR_MM);
   const stackStride = sheetH + gapPx;
   const interBreak = sheetH + gapPx - innerH;
   return {
@@ -330,6 +367,28 @@ function IconBookOpen({ className }) {
   );
 }
 
+const LEXI_EMBED_TOP_CHROME = "lexi-embed-top-chrome";
+
+function UserProfileIcon({ className }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth={1.5}
+      stroke="currentColor"
+      className={className}
+      aria-hidden
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"
+      />
+    </svg>
+  );
+}
+
 function IconArrowLeft({ className }) {
   return (
     <svg
@@ -414,6 +473,8 @@ function applyInlineStyleInEditor(editor, style) {
  *   onReadingSaved?: () => void,
  *   writingDocumentId?: string | null,
  *   onWritingDocumentCommitted?: (id: string) => void,
+ *   onNavigateBack?: () => void,
+ *   navigateBackAriaLabel?: string,
  * }} props
  */
 export default function WordLikeWorkbench({
@@ -428,7 +489,22 @@ export default function WordLikeWorkbench({
   onReadingSaved,
   writingDocumentId = null,
   onWritingDocumentCommitted,
+  onNavigateBack,
+  navigateBackAriaLabel = "Geri",
 }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const onProfilePath = location.pathname === "/profil";
+
+  const handleToolbarProfileClick = useCallback(() => {
+    if (onProfilePath) {
+      if (canBrowserGoBack()) navigate(-1);
+      else navigate("/");
+    } else {
+      navigate("/profil");
+    }
+  }, [navigate, onProfilePath]);
+
   const editorRef = useRef(null);
   /** Karşılaştırma layout'u editörü yeniden mount ettiğinde kişiselleştirilmiş HTML korunur */
   const personalizedHtmlRef = useRef("");
@@ -437,6 +513,8 @@ export default function WordLikeWorkbench({
   const compareOriginalContentRef = useRef(null);
   /** Karşılaştırma: sol panel dikey/yatay kaydırma */
   const compareOriginalScrollRef = useRef(null);
+  /** Sabit araç çubuğu yüksekliği → kök paddingTop */
+  const toolbarRef = useRef(null);
   /** Araç çubuğuna tıklanınca kaybolan seçimi geri yüklemek için */
   const savedRangeRef = useRef(null);
   const spellRef = useRef(null);
@@ -458,6 +536,7 @@ export default function WordLikeWorkbench({
     /** @type {"left" | "center" | "right" | "justify"} */ ("left")
   );
   const [immersiveReading, setImmersiveReading] = useState(false);
+  const [toolbarInsetPx, setToolbarInsetPx] = useState(56);
   const [compareSplit, setCompareSplit] = useState(false);
   /** Karşılaştır toggle'ında useLayoutEffect'in yalnızca gerçek geçişte çalışması için */
   const prevCompareSplitRef = useRef(compareSplit);
@@ -473,12 +552,16 @@ export default function WordLikeWorkbench({
   const [footerHxSingle, setFooterHxSingle] = useState({ x: 0, max: 0 });
   const [footerHxCmpLeft, setFooterHxCmpLeft] = useState({ x: 0, max: 0 });
   const [footerHxCmpRight, setFooterHxCmpRight] = useState({ x: 0, max: 0 });
+  const [cmpVxLeft, setCmpVxLeft] = useState({ top: 0, max: 0 });
+  const [cmpVxRight, setCmpVxRight] = useState({ top: 0, max: 0 });
 
   const isPdfReading = mode === "reading" && readingDocKind === "pdf";
-  const pdfFileBytes = useMemo(() => {
-    if (!isPdfReading) return null;
-    return decodeStoredContentToPdfBytes(initialBody ?? "");
-  }, [isPdfReading, initialBody]);
+  const readPdfSliceForDocument = useRef(
+    createPdfStoredContentSliceReader()
+  ).current;
+  const pdfFileBytes = !isPdfReading
+    ? null
+    : readPdfSliceForDocument(initialBody ?? "");
 
   /** DOCX/mammoth HTML: kök font-size uygulanmaz, yapı korunur */
   const isRichReadingHtml = useMemo(
@@ -542,8 +625,30 @@ export default function WordLikeWorkbench({
   }, [documentId, readingDocKind]);
 
   const pdfScaleSingle = readingZoomSingle;
-  const pdfScaleCompareLeft = readingZoomCompareLeft;
-  const pdfScaleCompareRight = readingZoomCompareRight;
+
+  useEffect(() => {
+    if (typeof onNavigateBack !== "function") return undefined;
+    window.dispatchEvent(
+      new CustomEvent(LEXI_EMBED_TOP_CHROME, { detail: { embedded: true } })
+    );
+    return () => {
+      window.dispatchEvent(
+        new CustomEvent(LEXI_EMBED_TOP_CHROME, { detail: { embedded: false } })
+      );
+    };
+  }, [onNavigateBack]);
+
+  useLayoutEffect(() => {
+    if (immersiveReading) return undefined;
+    const el = toolbarRef.current;
+    if (!el) return undefined;
+    const measure = () =>
+      setToolbarInsetPx(Math.ceil(el.getBoundingClientRect().height));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [immersiveReading, onNavigateBack]);
 
   const uppBackgroundColor =
     upp?.background && typeof upp.background.color === "string"
@@ -551,12 +656,12 @@ export default function WordLikeWorkbench({
       : "#FFF8E7";
 
   const htmlCompareLayoutLeft = useMemo(
-    () => readingPageLayoutPx(readingZoomCompareLeft),
-    [readingZoomCompareLeft]
+    () => readingComparePanelLayoutPx(DOC_ZOOM_DEFAULT),
+    []
   );
   const htmlCompareLayoutRight = useMemo(
-    () => readingPageLayoutPx(readingZoomCompareRight),
-    [readingZoomCompareRight]
+    () => readingComparePanelLayoutPx(DOC_ZOOM_DEFAULT),
+    []
   );
 
   const applyUppTypography = useCallback(() => {
@@ -621,10 +726,7 @@ export default function WordLikeWorkbench({
     setWordCount(words);
     setCharCount(plain.length);
     const contentH = el.scrollHeight;
-    const innerHUnit =
-      mode === "reading" && compareSplit && !isPdfReading
-        ? readingPageLayoutPx(readingZoomCompareRight).innerH
-        : PAGE_INNER_H_PX;
+    const innerHUnit = PAGE_INNER_H_PX;
     const rawPages = Math.ceil(
       (Number.isFinite(contentH) ? contentH : 0) / innerHUnit
     );
@@ -633,7 +735,7 @@ export default function WordLikeWorkbench({
     if (mode === "reading" && !isPdfReading) {
       personalizedHtmlRef.current = el.innerHTML;
     }
-  }, [mode, isPdfReading, compareSplit, readingZoomCompareRight]);
+  }, [mode, isPdfReading, compareSplit]);
 
   const runTurkishSpell = useCallback(() => {
     const ed = editorRef.current;
@@ -893,13 +995,12 @@ export default function WordLikeWorkbench({
     const el = compareOriginalContentRef.current;
     if (!el) return;
     const h = el.scrollHeight;
-    const zLayout = readingPageLayoutPx(readingZoomCompareLeft);
     const pages = Math.min(
       500,
-      Math.max(1, Math.ceil(h / zLayout.innerH))
+      Math.max(1, Math.ceil(h / PAGE_INNER_H_PX))
     );
     setCompareOriginalPageCount(pages);
-  }, [compareSplit, compareLeftMarkup, readingZoomCompareLeft, isPdfReading, mode]);
+  }, [compareSplit, compareLeftMarkup, isPdfReading, mode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1066,11 +1167,33 @@ export default function WordLikeWorkbench({
     }
   }, []);
 
+  const syncComparePanelVertLeft = useCallback(() => {
+    const o = compareOriginalScrollRef.current;
+    if (o) {
+      const maxO = Math.max(0, o.scrollHeight - o.clientHeight);
+      setCmpVxLeft({ top: o.scrollTop, max: maxO });
+    } else {
+      setCmpVxLeft({ top: 0, max: 0 });
+    }
+  }, []);
+
+  const syncComparePanelVertRight = useCallback(() => {
+    const p = scrollAreaRef.current;
+    if (p) {
+      const maxP = Math.max(0, p.scrollHeight - p.clientHeight);
+      setCmpVxRight({ top: p.scrollTop, max: maxP });
+    } else {
+      setCmpVxRight({ top: 0, max: 0 });
+    }
+  }, []);
+
   const measureFooterHorizontalScroll = useCallback(() => {
     if (immersiveReading) return;
     if (mode === "reading" && compareSplit) {
       syncComparePanelHxLeft();
       syncComparePanelHxRight();
+      syncComparePanelVertLeft();
+      syncComparePanelVertRight();
       return;
     }
     if (mode === "reading" || mode === "writing") {
@@ -1082,17 +1205,35 @@ export default function WordLikeWorkbench({
         setFooterHxSingle({ x: 0, max: 0 });
       }
     }
-  }, [immersiveReading, mode, compareSplit, syncComparePanelHxLeft, syncComparePanelHxRight]);
+  }, [
+    immersiveReading,
+    mode,
+    compareSplit,
+    syncComparePanelHxLeft,
+    syncComparePanelHxRight,
+    syncComparePanelVertLeft,
+    syncComparePanelVertRight,
+  ]);
 
   const handleCompareOriginalScroll = useCallback(() => {
     updateCompareOriginalPageFromScroll();
     syncComparePanelHxLeft();
-  }, [updateCompareOriginalPageFromScroll, syncComparePanelHxLeft]);
+    syncComparePanelVertLeft();
+  }, [
+    updateCompareOriginalPageFromScroll,
+    syncComparePanelHxLeft,
+    syncComparePanelVertLeft,
+  ]);
 
   const handleComparePersonalizedScroll = useCallback(() => {
     updatePersonalizedPageFromScroll();
     syncComparePanelHxRight();
-  }, [updatePersonalizedPageFromScroll, syncComparePanelHxRight]);
+    syncComparePanelVertRight();
+  }, [
+    updatePersonalizedPageFromScroll,
+    syncComparePanelHxRight,
+    syncComparePanelVertRight,
+  ]);
 
   const handleScrollAreaScroll = useCallback(() => {
     updateCurrentPageFromScroll();
@@ -1210,15 +1351,19 @@ export default function WordLikeWorkbench({
     isRichReadingHtml ? {} : { color: "#1c1917" }
   );
 
+  const showDocRouteChrome = typeof onNavigateBack === "function";
+
   return (
     <div
       className={
         immersiveReading
           ? "fixed inset-0 z-[120] flex min-h-0 min-w-0 flex-col"
-          : "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-stone-400"
+          : "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-clip bg-stone-400"
       }
       style={
-        immersiveReading ? { backgroundColor: uppBackgroundColor } : undefined
+        immersiveReading
+          ? { backgroundColor: uppBackgroundColor }
+          : { paddingTop: toolbarInsetPx }
       }
     >
       {immersiveReading ? (
@@ -1234,9 +1379,38 @@ export default function WordLikeWorkbench({
 
       {!immersiveReading ? (
       <header
-        className="fixed left-0 right-0 top-14 z-[60] flex w-full flex-wrap content-center items-center gap-x-2 gap-y-2 border-b border-stone-400 bg-stone-300 py-2 pl-[3.75rem] pr-[3.75rem] shadow-sm sm:gap-x-3 sm:pl-16 sm:pr-16"
+        ref={toolbarRef}
+        className={
+          showDocRouteChrome
+            ? "flex w-full flex-wrap content-center items-center gap-x-2 gap-y-2 border-b border-stone-400 bg-stone-300 py-2 pl-2 pr-2 shadow-sm sm:gap-x-3 sm:pl-3 sm:pr-3"
+            : "flex w-full flex-wrap content-center items-center gap-x-2 gap-y-2 border-b border-stone-400 bg-stone-300 py-2 pl-[3.75rem] pr-[3.75rem] shadow-sm sm:gap-x-3 sm:pl-16 sm:pr-16"
+        }
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 50,
+        }}
         onPointerDownCapture={rememberSelectionInEditor}
       >
+        {showDocRouteChrome ? (
+          <button
+            type="button"
+            onClick={onNavigateBack}
+            className="order-first shrink-0 flex size-11 items-center justify-center rounded-full border-2 border-stone-200 bg-white/95 text-stone-600 shadow-sm backdrop-blur-sm transition hover:border-emerald-600 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
+            aria-label={navigateBackAriaLabel}
+          >
+            <IconArrowLeft className="size-6" />
+          </button>
+        ) : null}
+        <div
+          className={
+            showDocRouteChrome
+              ? "flex min-w-0 flex-1 flex-wrap content-center items-center justify-center gap-x-2 gap-y-2"
+              : "contents"
+          }
+        >
         <div className="flex shrink-0 flex-wrap items-center gap-1">
           <button
             type="button"
@@ -1458,12 +1632,34 @@ export default function WordLikeWorkbench({
             Kaydedildi
           </span>
         ) : null}
+        </div>
+        {showDocRouteChrome ? (
+          <button
+            type="button"
+            onClick={handleToolbarProfileClick}
+            className="order-last shrink-0 flex size-11 items-center justify-center rounded-full border-2 border-stone-200 bg-white/95 text-stone-600 shadow-sm backdrop-blur-sm transition hover:border-emerald-600 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
+            aria-label={
+              onProfilePath ? "Önceki sayfaya dön" : "Profil sayfasına git"
+            }
+          >
+            <UserProfileIcon className="size-6" />
+          </button>
+        ) : null}
       </header>
       ) : null}
 
       {mode === "reading" && compareSplit && !immersiveReading ? (
         isPdfReading ? (
-        <div className="flex min-h-0 flex-1 flex-row gap-2 overflow-hidden px-0.5 pt-40 pb-14 sm:pt-36 max-sm:min-h-0 max-sm:flex-col max-sm:overflow-y-auto">
+        <div
+          className="flex min-h-0 flex-1 flex-row gap-2 overflow-hidden px-0.5 pt-2 max-sm:min-h-0 max-sm:flex-col max-sm:overflow-y-auto"
+          style={{
+            maxHeight:
+              "calc(100svh - 3.5rem - 4.5rem - env(safe-area-inset-bottom, 0px))",
+            paddingBottom:
+              "max(3.5rem, calc(env(safe-area-inset-bottom, 0px) + 2.75rem))",
+            boxSizing: "border-box",
+          }}
+        >
           <section
             className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border-2 border-stone-400 bg-white shadow-md max-sm:max-h-[48dvh] max-sm:flex-none"
             aria-label="Orijinal belge"
@@ -1472,162 +1668,94 @@ export default function WordLikeWorkbench({
               Orijinal
             </h2>
             <div
-              ref={compareOriginalScrollRef}
-              className="min-h-0 min-w-0 flex-1 flex flex-col items-center overflow-y-auto overflow-x-auto bg-white"
-              onScroll={handleCompareOriginalScroll}
+              className="flex min-h-0 min-w-0 flex-1 flex-col"
+              style={{ position: "relative" }}
+              onWheel={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                compareOriginalScrollRef.current.scrollTop += e.deltaY;
+              }}
             >
-              <div className="flex w-full shrink-0 flex-col items-center p-3">
-                {pdfFileBytes ? (
-                  <PdfReadingWorkbench
-                    fileBytes={pdfFileBytes}
-                    upp={upp}
-                    immersiveReading={false}
-                    variant="original"
-                    scale={pdfScaleCompareLeft}
-                  />
-                ) : (
-                  <p className="text-sm text-red-800" role="alert">
-                    PDF açılamadı veya kayıt bozuk.
-                  </p>
-                )}
-              </div>
-            </div>
-            {footerHxCmpLeft.max > 0 ? (
-              <div className="shrink-0 border-t border-stone-300 bg-stone-200/90 px-2 py-1.5">
-                <input
-                  type="range"
-                  min={0}
-                  max={footerHxCmpLeft.max}
-                  value={Math.min(footerHxCmpLeft.x, footerHxCmpLeft.max)}
-                  onChange={(e) => {
-                    const el = compareOriginalScrollRef.current;
-                    if (!el) return;
-                    const v = Number(e.target.value);
-                    el.scrollLeft = v;
-                    const max = Math.max(0, el.scrollWidth - el.clientWidth);
-                    setFooterHxCmpLeft({ x: v, max });
+              <div className="flex min-h-0 min-w-0 flex-1 flex-row items-stretch gap-1">
+                <div
+                  ref={compareOriginalScrollRef}
+                  className="min-h-0 min-w-0 flex-1 overflow-x-auto bg-white"
+                  style={{
+                    overflowY: "auto",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
                   }}
-                  onInput={(e) => {
-                    const el = compareOriginalScrollRef.current;
-                    if (!el) return;
-                    const v = Number(e.currentTarget.value);
-                    el.scrollLeft = v;
-                    const max = Math.max(0, el.scrollWidth - el.clientWidth);
-                    setFooterHxCmpLeft({ x: v, max });
-                  }}
-                  className="h-2 w-full min-w-0 cursor-pointer accent-stone-600"
-                  aria-label="Orijinal yatay kaydırma"
-                />
-              </div>
-            ) : null}
-          </section>
-
-          <section
-            className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border-2 border-emerald-700/50 bg-emerald-100/40 shadow-md max-sm:min-h-[48dvh] max-sm:flex-none"
-            aria-label="Kişiselleştirilmiş belge"
-          >
-            <h2 className="shrink-0 border-b border-emerald-600/40 bg-emerald-200/80 px-3 py-2 text-center text-xs font-bold uppercase tracking-wide text-emerald-950">
-              Profilinize göre
-            </h2>
-            <div
-              ref={scrollAreaRef}
-              className="min-h-0 min-w-0 flex-1 flex flex-col items-center overflow-y-auto overflow-x-auto"
-              style={{ backgroundColor: uppBackgroundColor }}
-              onScroll={handleComparePersonalizedScroll}
-            >
-              <div className="flex w-full shrink-0 flex-col items-center p-3">
-                {pdfFileBytes ? (
-                  <PdfReadingWorkbench
-                    fileBytes={pdfFileBytes}
-                    upp={upp}
-                    immersiveReading={false}
-                    onDocumentLoad={setPdfPageTotal}
-                    variant="personalized"
-                    scale={pdfScaleCompareRight}
-                  />
-                ) : (
-                  <p className="text-sm text-red-800" role="alert">
-                    PDF açılamadı veya kayıt bozuk.
-                  </p>
-                )}
-              </div>
-            </div>
-            {footerHxCmpRight.max > 0 ? (
-              <div
-                className="shrink-0 border-t border-emerald-600/30 px-2 py-1.5"
-                style={{ backgroundColor: uppBackgroundColor }}
-              >
-                <input
-                  type="range"
-                  min={0}
-                  max={footerHxCmpRight.max}
-                  value={Math.min(footerHxCmpRight.x, footerHxCmpRight.max)}
-                  onChange={(e) => {
-                    const el = scrollAreaRef.current;
-                    if (!el) return;
-                    const v = Number(e.target.value);
-                    el.scrollLeft = v;
-                    const max = Math.max(0, el.scrollWidth - el.clientWidth);
-                    setFooterHxCmpRight({ x: v, max });
-                  }}
-                  onInput={(e) => {
-                    const el = scrollAreaRef.current;
-                    if (!el) return;
-                    const v = Number(e.currentTarget.value);
-                    el.scrollLeft = v;
-                    const max = Math.max(0, el.scrollWidth - el.clientWidth);
-                    setFooterHxCmpRight({ x: v, max });
-                  }}
-                  className="h-2 w-full min-w-0 cursor-pointer accent-emerald-600"
-                  aria-label="Kişiselleştirilmiş yatay kaydırma"
-                />
-              </div>
-            ) : null}
-          </section>
-        </div>
-        ) : (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-0.5 pb-14 pt-40 sm:pt-36">
-          <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col gap-2 px-0.5 py-1 sm:flex-row sm:items-stretch sm:gap-2">
-            <section
-              className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden rounded-xl border-2 border-stone-400 bg-white shadow-md sm:basis-0"
-              aria-label="Orijinal belge"
-            >
-              <h2 className="sticky top-0 z-10 shrink-0 border-b border-stone-400 bg-stone-300 px-3 py-2 text-center text-xs font-bold uppercase tracking-wide text-stone-800">
-                Orijinal
-              </h2>
-              <div
-                ref={compareOriginalScrollRef}
-                className="min-h-0 min-w-0 flex-1 flex flex-col items-center overflow-y-auto overflow-x-auto bg-white"
-                onScroll={handleCompareOriginalScroll}
-              >
-                <div className="flex w-full shrink-0 flex-col items-center px-1 py-2 sm:px-2">
-                  <div
-                    className="relative shrink-0"
-                    style={cmpChromeLeft.sheetOuter}
-                  >
-                    <div className="compare-original-pane w-full max-w-full">
+                  onScroll={handleCompareOriginalScroll}
+                >
+                  <div className="flex w-full shrink-0 flex-col items-center p-3">
+                    {pdfFileBytes ? (
                       <div
-                        className="relative mx-auto"
-                        style={cmpChromeLeft.pageRoot}
+                        style={{
+                          transform: `scale(${readingZoomCompareLeft})`,
+                          transformOrigin: "top center",
+                        }}
                       >
-                        <div
-                          className="relative z-[5]"
-                          style={cmpChromeLeft.contentPad}
-                        >
-                          <div
-                            ref={compareOriginalContentRef}
-                            className="word-editor-surface word-editor-surface--rich relative z-[6] w-full max-w-full bg-transparent select-text text-stone-900 outline-none"
-                            style={cmpOrigEditorStyle}
-                            dangerouslySetInnerHTML={{ __html: compareLeftMarkup }}
-                          />
-                        </div>
+                        <PdfReadingWorkbench
+                          fileBytes={pdfFileBytes}
+                          upp={upp}
+                          immersiveReading={false}
+                          onDocumentLoad={setPdfPageTotal}
+                          variant="original"
+                          scale={DOC_ZOOM_DEFAULT}
+                        />
                       </div>
-                    </div>
+                    ) : (
+                      <p className="text-sm text-red-800" role="alert">
+                        PDF açılamadı veya kayıt bozuk.
+                      </p>
+                    )}
                   </div>
                 </div>
+                {cmpVxLeft.max > 0 ? (
+                  <input
+                    type="range"
+                    min={0}
+                    max={cmpVxLeft.max}
+                    value={Math.min(cmpVxLeft.top, cmpVxLeft.max)}
+                    step={1}
+                    onChange={(e) => {
+                      const el = compareOriginalScrollRef.current;
+                      if (!el) return;
+                      const v = Number(e.target.value);
+                      el.scrollTop = v;
+                      updateCompareOriginalPageFromScroll();
+                      syncComparePanelHxLeft();
+                      syncComparePanelVertLeft();
+                    }}
+                    onInput={(e) => {
+                      const el = compareOriginalScrollRef.current;
+                      if (!el) return;
+                      const v = Number(e.currentTarget.value);
+                      el.scrollTop = v;
+                      updateCompareOriginalPageFromScroll();
+                      syncComparePanelHxLeft();
+                      syncComparePanelVertLeft();
+                    }}
+                    className="min-h-0 w-4 shrink-0 cursor-pointer accent-stone-600"
+                    style={{
+                      writingMode: "vertical-lr",
+                      direction: "rtl",
+                    }}
+                    aria-label="Orijinal dikey kaydırma"
+                  />
+                ) : null}
               </div>
               {footerHxCmpLeft.max > 0 ? (
-                <div className="shrink-0 border-t border-stone-300 bg-stone-200/90 px-2 py-1.5">
+                <div
+                  className="border-t border-stone-300 bg-stone-200/90 px-2 py-1.5"
+                  style={{
+                    position: "sticky",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                  }}
+                >
                   <input
                     type="range"
                     min={0}
@@ -1654,76 +1782,106 @@ export default function WordLikeWorkbench({
                   />
                 </div>
               ) : null}
-            </section>
+            </div>
+          </section>
 
-            <section
-              className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden rounded-xl border-2 border-emerald-700/50 bg-emerald-100/40 shadow-md sm:basis-0"
-              aria-label="Kişiselleştirilmiş belge"
+          <section
+            className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden rounded-xl border-2 border-emerald-700/50 bg-emerald-100/40 shadow-md max-sm:min-h-[48dvh] max-sm:flex-none"
+            aria-label="Kişiselleştirilmiş belge"
+          >
+            <h2 className="shrink-0 border-b border-emerald-600/40 bg-emerald-200/80 px-3 py-2 text-center text-xs font-bold uppercase tracking-wide text-emerald-950">
+              Profilinize göre
+            </h2>
+            <div
+              className="flex min-h-0 min-w-0 flex-1 flex-col"
+              style={{ position: "relative" }}
+              onWheel={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                scrollAreaRef.current.scrollTop += e.deltaY;
+              }}
             >
-              <h2 className="sticky top-0 z-10 shrink-0 border-b border-emerald-600/40 bg-emerald-200/80 px-3 py-2 text-center text-xs font-bold uppercase tracking-wide text-emerald-950">
-                Profilinize göre
-              </h2>
-              <div
-                ref={scrollAreaRef}
-                className="min-h-0 min-w-0 flex-1 flex flex-col items-center overflow-y-auto overflow-x-auto"
-                style={{ backgroundColor: uppBackgroundColor }}
-                onScroll={handleComparePersonalizedScroll}
-              >
-                <div className="flex w-full shrink-0 flex-col items-center px-1 py-2 sm:px-2">
-                  <div
-                    className="relative shrink-0"
-                    style={cmpChromeRight.sheetOuter}
-                  >
-                    <div className="w-full max-w-full">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-row items-stretch gap-1">
+                <div
+                  ref={scrollAreaRef}
+                  className="min-h-0 min-w-0 flex-1 overflow-x-auto"
+                  style={{
+                    overflowY: "auto",
+                    backgroundColor: uppBackgroundColor,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                  }}
+                  onScroll={handleComparePersonalizedScroll}
+                >
+                  <div className="flex w-full shrink-0 flex-col items-center p-3">
+                    {pdfFileBytes ? (
                       <div
-                        className="relative mx-auto"
-                        style={cmpChromeRight.pageRoot}
+                        style={{
+                          transform: `scale(${readingZoomCompareRight})`,
+                          transformOrigin: "top center",
+                        }}
                       >
-                        <div
-                          className="relative z-[5]"
-                          style={cmpChromeRight.contentPad}
-                        >
-                          <div
-                            className="min-w-0"
-                            style={{
-                              fontSize: `${16 * COMPARE_PERSONALIZED_FONT_TO_ORIGINAL}px`,
-                            }}
-                          >
-                            <div
-                              ref={editorRef}
-                              contentEditable
-                              suppressContentEditableWarning
-                              role="textbox"
-                              aria-multiline
-                              aria-label="Kişiselleştirilmiş belge metni"
-                              lang="tr"
-                              spellCheck={false}
-                              onInput={() => {
-                                syncStats();
-                                refreshFormatState();
-                                scheduleTurkishSpell();
-                              }}
-                              className={`word-editor-surface relative z-[6] w-full max-w-full bg-transparent text-stone-900 outline-none ${
-                                isRichReadingHtml ||
-                                (mode === "reading" &&
-                                  compareSplit &&
-                                  !isPdfReading)
-                                  ? "word-editor-surface--rich word-editor-surface--rich-inherit "
-                                  : ""
-                              }`}
-                              style={cmpPersEditorStyle}
-                            />
-                          </div>
-                        </div>
+                        <PdfReadingWorkbench
+                          fileBytes={pdfFileBytes}
+                          upp={upp}
+                          immersiveReading={false}
+                          onDocumentLoad={setPdfPageTotal}
+                          variant="personalized"
+                          scale={DOC_ZOOM_DEFAULT}
+                        />
                       </div>
-                    </div>
+                    ) : (
+                      <p className="text-sm text-red-800" role="alert">
+                        PDF açılamadı veya kayıt bozuk.
+                      </p>
+                    )}
                   </div>
                 </div>
+                {cmpVxRight.max > 0 ? (
+                  <input
+                    type="range"
+                    min={0}
+                    max={cmpVxRight.max}
+                    value={Math.min(cmpVxRight.top, cmpVxRight.max)}
+                    step={1}
+                    onChange={(e) => {
+                      const el = scrollAreaRef.current;
+                      if (!el) return;
+                      const v = Number(e.target.value);
+                      el.scrollTop = v;
+                      updatePersonalizedPageFromScroll();
+                      syncComparePanelHxRight();
+                      syncComparePanelVertRight();
+                    }}
+                    onInput={(e) => {
+                      const el = scrollAreaRef.current;
+                      if (!el) return;
+                      const v = Number(e.currentTarget.value);
+                      el.scrollTop = v;
+                      updatePersonalizedPageFromScroll();
+                      syncComparePanelHxRight();
+                      syncComparePanelVertRight();
+                    }}
+                    className="min-h-0 w-4 shrink-0 cursor-pointer accent-emerald-600"
+                    style={{
+                      writingMode: "vertical-lr",
+                      direction: "rtl",
+                    }}
+                    aria-label="Kişiselleştirilmiş dikey kaydırma"
+                  />
+                ) : null}
               </div>
               {footerHxCmpRight.max > 0 ? (
                 <div
-                  className="shrink-0 border-t border-emerald-600/30 px-2 py-1.5"
-                  style={{ backgroundColor: uppBackgroundColor }}
+                  className="border-t border-emerald-600/30 px-2 py-1.5"
+                  style={{
+                    position: "sticky",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    backgroundColor: uppBackgroundColor,
+                  }}
                 >
                   <input
                     type="range"
@@ -1751,7 +1909,351 @@ export default function WordLikeWorkbench({
                   />
                 </div>
               ) : null}
-            </section>
+            </div>
+          </section>
+        </div>
+        ) : (
+        <div
+          className="pt-2"
+          style={{
+            display: "flex",
+            flexDirection: "row",
+            flex: 1,
+            minHeight: 0,
+            gap: 8,
+            paddingLeft: 4,
+            paddingRight: 4,
+            paddingBottom:
+              "max(3.5rem, calc(env(safe-area-inset-bottom, 0px) + 2.75rem))",
+            overflow: "visible",
+            maxHeight:
+              "calc(100svh - 3.5rem - 4.5rem - env(safe-area-inset-bottom, 0px))",
+            boxSizing: "border-box",
+          }}
+        >
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              minWidth: 0,
+              display: "flex",
+              flexDirection: "column",
+              position: "relative",
+              overflow: "visible",
+            }}
+            onWheel={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              compareOriginalScrollRef.current.scrollTop += e.deltaY;
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "stretch",
+                gap: 4,
+                flex: 1,
+                minHeight: 0,
+                minWidth: 0,
+                overflow: "visible",
+              }}
+            >
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  overflowY: "scroll",
+                  overflowX: "auto",
+                  background: "white",
+                }}
+                ref={compareOriginalScrollRef}
+                onScroll={handleCompareOriginalScroll}
+              >
+                <div className="flex w-full shrink-0 flex-col items-center px-1 py-2 sm:px-2">
+                  <div
+                    style={{
+                      transform: `scale(${readingZoomCompareLeft})`,
+                      transformOrigin: "top center",
+                    }}
+                  >
+                    <div
+                      className="relative shrink-0"
+                      style={cmpChromeLeft.sheetOuter}
+                    >
+                      <div className="compare-original-pane w-full max-w-full">
+                        <div
+                          className="relative mx-auto"
+                          style={cmpChromeLeft.pageRoot}
+                        >
+                          <div
+                            className="relative z-[5]"
+                            style={cmpChromeLeft.contentPad}
+                          >
+                            <div
+                              ref={compareOriginalContentRef}
+                              className="word-editor-surface word-editor-surface--rich relative z-[6] w-full max-w-full bg-transparent select-text text-stone-900 outline-none"
+                              style={cmpOrigEditorStyle}
+                              dangerouslySetInnerHTML={{
+                                __html: compareLeftMarkup,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {cmpVxLeft.max > 0 ? (
+                <input
+                  type="range"
+                  min={0}
+                  max={cmpVxLeft.max}
+                  value={Math.min(cmpVxLeft.top, cmpVxLeft.max)}
+                  step={1}
+                  onChange={(e) => {
+                    const el = compareOriginalScrollRef.current;
+                    if (!el) return;
+                    const v = Number(e.target.value);
+                    el.scrollTop = v;
+                    updateCompareOriginalPageFromScroll();
+                    syncComparePanelHxLeft();
+                    syncComparePanelVertLeft();
+                  }}
+                  onInput={(e) => {
+                    const el = compareOriginalScrollRef.current;
+                    if (!el) return;
+                    const v = Number(e.currentTarget.value);
+                    el.scrollTop = v;
+                    updateCompareOriginalPageFromScroll();
+                    syncComparePanelHxLeft();
+                    syncComparePanelVertLeft();
+                  }}
+                  className="min-h-0 w-4 shrink-0 cursor-pointer accent-stone-600"
+                  style={{
+                    writingMode: "vertical-lr",
+                    direction: "rtl",
+                  }}
+                  aria-label="Orijinal dikey kaydırma"
+                />
+              ) : null}
+            </div>
+            {footerHxCmpLeft.max > 0 ? (
+              <div
+                className="border-t border-stone-300 bg-stone-200/90 px-2 py-1.5"
+                style={{
+                  position: "sticky",
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  zIndex: 10,
+                }}
+              >
+                <input
+                  type="range"
+                  min={0}
+                  max={footerHxCmpLeft.max}
+                  value={Math.min(footerHxCmpLeft.x, footerHxCmpLeft.max)}
+                  onChange={(e) => {
+                    const el = compareOriginalScrollRef.current;
+                    if (!el) return;
+                    const v = Number(e.target.value);
+                    el.scrollLeft = v;
+                    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+                    setFooterHxCmpLeft({ x: v, max });
+                  }}
+                  onInput={(e) => {
+                    const el = compareOriginalScrollRef.current;
+                    if (!el) return;
+                    const v = Number(e.currentTarget.value);
+                    el.scrollLeft = v;
+                    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+                    setFooterHxCmpLeft({ x: v, max });
+                  }}
+                  className="h-2 w-full min-w-0 cursor-pointer accent-stone-600"
+                  aria-label="Orijinal yatay kaydırma"
+                />
+              </div>
+            ) : null}
+          </div>
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              minWidth: 0,
+              display: "flex",
+              flexDirection: "column",
+              position: "relative",
+              overflow: "visible",
+            }}
+            onWheel={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              scrollAreaRef.current.scrollTop += e.deltaY;
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "stretch",
+                gap: 4,
+                flex: 1,
+                minHeight: 0,
+                minWidth: 0,
+                overflow: "visible",
+              }}
+            >
+              <div
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  overflowY: "scroll",
+                  overflowX: "auto",
+                  backgroundColor: uppBackgroundColor,
+                }}
+                ref={scrollAreaRef}
+                onScroll={handleComparePersonalizedScroll}
+              >
+                <div className="flex w-full shrink-0 flex-col items-center px-1 py-2 sm:px-2">
+                  <div
+                    style={{
+                      transform: `scale(${readingZoomCompareRight})`,
+                      transformOrigin: "top center",
+                    }}
+                  >
+                    <div
+                      className="relative shrink-0"
+                      style={cmpChromeRight.sheetOuter}
+                    >
+                      <div className="w-full max-w-full">
+                        <div
+                          className="relative mx-auto"
+                          style={cmpChromeRight.pageRoot}
+                        >
+                          <div
+                            className="relative z-[5]"
+                            style={cmpChromeRight.contentPad}
+                          >
+                            <div
+                              className="min-w-0"
+                              style={{
+                                fontSize: `${16 * COMPARE_PERSONALIZED_FONT_TO_ORIGINAL}px`,
+                              }}
+                            >
+                              <div
+                                ref={editorRef}
+                                contentEditable
+                                suppressContentEditableWarning
+                                role="textbox"
+                                aria-multiline
+                                aria-label="Kişiselleştirilmiş belge metni"
+                                lang="tr"
+                                spellCheck={false}
+                                onInput={() => {
+                                  syncStats();
+                                  refreshFormatState();
+                                  scheduleTurkishSpell();
+                                }}
+                                className={`word-editor-surface relative z-[6] w-full max-w-full bg-transparent text-stone-900 outline-none ${
+                                  isRichReadingHtml ||
+                                  (mode === "reading" &&
+                                    compareSplit &&
+                                    !isPdfReading)
+                                    ? "word-editor-surface--rich word-editor-surface--rich-inherit "
+                                    : ""
+                                }`}
+                                style={cmpPersEditorStyle}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {cmpVxRight.max > 0 ? (
+                <input
+                  type="range"
+                  min={0}
+                  max={cmpVxRight.max}
+                  value={Math.min(cmpVxRight.top, cmpVxRight.max)}
+                  step={1}
+                  onChange={(e) => {
+                    const el = scrollAreaRef.current;
+                    if (!el) return;
+                    const v = Number(e.target.value);
+                    el.scrollTop = v;
+                    updatePersonalizedPageFromScroll();
+                    syncComparePanelHxRight();
+                    syncComparePanelVertRight();
+                  }}
+                  onInput={(e) => {
+                    const el = scrollAreaRef.current;
+                    if (!el) return;
+                    const v = Number(e.currentTarget.value);
+                    el.scrollTop = v;
+                    updatePersonalizedPageFromScroll();
+                    syncComparePanelHxRight();
+                    syncComparePanelVertRight();
+                  }}
+                  className="min-h-0 w-4 shrink-0 cursor-pointer accent-emerald-600"
+                  style={{
+                    writingMode: "vertical-lr",
+                    direction: "rtl",
+                  }}
+                  aria-label="Kişiselleştirilmiş dikey kaydırma"
+                />
+              ) : null}
+            </div>
+            {footerHxCmpRight.max > 0 ? (
+              <div
+                className="border-t border-emerald-600/30 px-2 py-1.5"
+                style={{
+                  position: "sticky",
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  zIndex: 10,
+                  backgroundColor: uppBackgroundColor,
+                }}
+              >
+                <input
+                  type="range"
+                  min={0}
+                  max={footerHxCmpRight.max}
+                  value={Math.min(footerHxCmpRight.x, footerHxCmpRight.max)}
+                  onChange={(e) => {
+                    const el = scrollAreaRef.current;
+                    if (!el) return;
+                    const v = Number(e.target.value);
+                    el.scrollLeft = v;
+                    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+                    setFooterHxCmpRight({ x: v, max });
+                  }}
+                  onInput={(e) => {
+                    const el = scrollAreaRef.current;
+                    if (!el) return;
+                    const v = Number(e.currentTarget.value);
+                    el.scrollLeft = v;
+                    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+                    setFooterHxCmpRight({ x: v, max });
+                  }}
+                  className="h-2 w-full min-w-0 cursor-pointer accent-emerald-600"
+                  aria-label="Kişiselleştirilmiş yatay kaydırma"
+                />
+              </div>
+            ) : null}
           </div>
         </div>
         )
@@ -1763,8 +2265,8 @@ export default function WordLikeWorkbench({
               immersiveReading
                 ? "min-h-0 flex-1 overflow-y-auto px-5 pb-3 pt-16 sm:px-12 sm:pt-20 md:px-20 md:py-12 lg:px-28 lg:py-16"
                 : isPdfReading
-                  ? "min-h-0 flex-1 overflow-y-auto overflow-x-auto pt-40 sm:pt-36"
-                  : "min-h-0 flex-1 overflow-y-auto overflow-x-auto pt-40 sm:pt-36"
+                  ? "min-h-0 flex-1 overflow-y-auto overflow-x-auto"
+                  : "min-h-0 flex-1 overflow-y-auto overflow-x-auto"
             }
             style={
               !immersiveReading && !isPdfReading

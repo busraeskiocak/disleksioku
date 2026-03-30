@@ -13,19 +13,37 @@ import {
   logPdfError,
   turkishPdfUserMessage,
 } from "../lib/pdfLoadMessages.js";
+import {
+  decodeStoredContentToPdfBytes,
+  fingerprintPdfFileBytesProp,
+} from "../lib/readingPdfStorage.js";
 
 const PDF_DOC_FALLBACK_ERR =
   "PDF dosyası okunamadı, lütfen başka bir dosya deneyin";
 
 /**
+ * @param {unknown} item
+ * @returns {item is { str: string, transform: number[] }}
+ */
+function isPdfTextRenderItem(item) {
+  return (
+    !!item &&
+    typeof item === "object" &&
+    "str" in item &&
+    typeof /** @type {{ str?: unknown }} */ (item).str === "string" &&
+    Array.isArray(/** @type {{ transform?: unknown }} */ (item).transform) &&
+    /** @type {{ transform: number[] }} */ (item).transform.length >= 6
+  );
+}
+
+/**
  * @param {{
- *   fileBytes: Uint8Array | null,
+ *   fileBytes: Uint8Array | string | null | undefined,
  *   upp: object,
  *   immersiveReading: boolean,
  *   onDocumentLoad?: (numPages: number) => void,
  *   variant?: "personalized" | "original",
  *   scale?: number,
- *   renderAnnotationLayer?: boolean,
  *   devicePixelRatio?: number,
  * }} props
  */
@@ -36,11 +54,12 @@ export default function PdfReadingWorkbench({
   onDocumentLoad,
   variant = "personalized",
   scale: scaleProp,
-  renderAnnotationLayer = true,
   devicePixelRatio: dprProp,
 }) {
   const [numPages, setNumPages] = useState(0);
   const [docErrorText, setDocErrorText] = useState(/** @type {string | null} */ (null));
+  /** @type {Record<number, import("pdfjs-dist").TextContent["items"]>} */
+  const [textItemsByPage, setTextItemsByPage] = useState({});
 
   const isOriginal = variant === "original";
 
@@ -57,10 +76,17 @@ export default function PdfReadingWorkbench({
     [isOriginal, upp?.fontPreference]
   );
 
-  const customTextRenderer = useCallback(
-    (item) => highlightPlainStringToInnerHtml(item.str ?? "", letterMap),
-    [letterMap]
-  );
+  const uppOverlayTypography = useMemo(() => {
+    if (isOriginal) return null;
+    const typo = upp?.typography ?? {};
+    const lsEm = typeof typo.letterSpacingEm === "number" ? typo.letterSpacingEm : 0.06;
+    const lh = typeof typo.lineHeight === "number" ? typo.lineHeight : 1.65;
+    const bg =
+      upp?.background && typeof upp.background.color === "string"
+        ? upp.background.color
+        : "transparent";
+    return { letterSpacingEm: lsEm, lineHeight: lh, backgroundColor: bg };
+  }, [isOriginal, upp]);
 
   const fallbackScale = immersiveReading ? 1.28 : 1.06;
   const scale =
@@ -95,17 +121,38 @@ export default function PdfReadingWorkbench({
     setNumPages(0);
   }, []);
 
+  const fileBytesFingerprint = fingerprintPdfFileBytesProp(fileBytes);
+
+  const documentFile = useMemo(() => {
+    if (fileBytes == null) return null;
+    /** @type {Uint8Array | null} */
+    let src = null;
+    if (typeof fileBytes === "string") {
+      src = decodeStoredContentToPdfBytes(fileBytes);
+    } else if (fileBytes instanceof Uint8Array && fileBytes.length > 0) {
+      src = fileBytes;
+    }
+    if (!src?.length) return null;
+    return new Uint8Array(src);
+  }, [fileBytesFingerprint]);
+
   useEffect(() => {
     setDocErrorText(null);
     setNumPages(0);
-  }, [fileBytes]);
+    setTextItemsByPage({});
+  }, [fileBytesFingerprint]);
 
-  if (!fileBytes || fileBytes.length === 0) {
-    console.error("[PdfReadingWorkbench] fileBytes boş");
+  const pdfFileForDocument = useMemo(() => {
+    if (!documentFile?.length) return null;
+    return { data: documentFile };
+  }, [documentFile]);
+
+  if (!pdfFileForDocument) {
     return (
-      <p className="text-sm text-red-800" role="alert">
-        {turkishPdfUserMessage("empty")}
-      </p>
+      <LoadingSpinner
+        label="PDF verisi hazırlanıyor…"
+        className="min-h-[140px] justify-center py-10"
+      />
     );
   }
 
@@ -116,7 +163,7 @@ export default function PdfReadingWorkbench({
   return (
     <div className={rootClass} style={{ fontFamily: fontStack }}>
       <Document
-        file={{ data: fileBytes }}
+        file={pdfFileForDocument}
         onLoadSuccess={onLoadSuccess}
         onLoadError={onLoadError}
         loading={
@@ -124,28 +171,85 @@ export default function PdfReadingWorkbench({
         }
         error={docErrorText ?? PDF_DOC_FALLBACK_ERR}
       >
-        {Array.from({ length: numPages }, (_, i) => (
-          <div
-            key={`pdf-page-wrap-${i + 1}`}
-            className="react-pdf__Page__outer mb-6 flex justify-center rounded-lg border border-stone-200 bg-stone-50 p-2 shadow-sm last:mb-0"
-          >
-            <Page
-              pageNumber={i + 1}
-              scale={scale}
-              devicePixelRatio={devicePixelRatio}
-              renderTextLayer
-              renderAnnotationLayer={renderAnnotationLayer}
-              customTextRenderer={isOriginal ? undefined : customTextRenderer}
-              className="shadow-md"
-              loading={
-                <LoadingSpinner
-                  label={`Sayfa ${i + 1} çiziliyor…`}
-                  className="min-h-[120px] justify-center py-8"
+        {Array.from({ length: numPages }, (_, i) => {
+          const pageNo = i + 1;
+          const items = textItemsByPage[pageNo];
+          return (
+            <div
+              key={`pdf-page-wrap-${pageNo}`}
+              className="react-pdf__Page__outer mb-6 flex justify-center rounded-lg border border-stone-200 bg-stone-50 p-2 shadow-sm last:mb-0"
+            >
+              <div className="relative inline-block max-w-full">
+                <Page
+                  pageNumber={pageNo}
+                  scale={scale}
+                  devicePixelRatio={devicePixelRatio}
+                  renderTextLayer
+                  renderAnnotationLayer={false}
+                  onGetTextSuccess={(tc) => {
+                    if (!isOriginal) {
+                      setTextItemsByPage((prev) => ({ ...prev, [pageNo]: tc.items }));
+                    }
+                  }}
+                  className="shadow-md"
+                  loading={
+                    <LoadingSpinner
+                      label={`Sayfa ${pageNo} çiziliyor…`}
+                      className="min-h-[120px] justify-center py-8"
+                    />
+                  }
                 />
-              }
-            />
-          </div>
-        ))}
+                {!isOriginal && uppOverlayTypography && items?.length ? (
+                  <div
+                    className="pdf-reading-upp-text-overlay pointer-events-none"
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top: 0,
+                      width: "100%",
+                      height: "100%",
+                      zIndex: 4,
+                      fontFamily: fontStack,
+                      letterSpacing: `${uppOverlayTypography.letterSpacingEm}em`,
+                      lineHeight: uppOverlayTypography.lineHeight,
+                      color: "#1c1917",
+                      backgroundColor:
+                        uppOverlayTypography.backgroundColor === "transparent"
+                          ? "transparent"
+                          : uppOverlayTypography.backgroundColor,
+                    }}
+                  >
+                    {items.map((item, idx) => {
+                      if (!isPdfTextRenderItem(item)) return null;
+                      const [a, b, c, d, e, f] = item.transform;
+                      const fontPx = Math.hypot(a, b) || 12;
+                      return (
+                        <span
+                          key={`pdf-ov-${pageNo}-${idx}`}
+                          style={{
+                            position: "absolute",
+                            left: 0,
+                            top: 0,
+                            transformOrigin: "0 0",
+                            transform: `matrix(${a}, ${b}, ${c}, ${d}, ${e}, ${f})`,
+                            whiteSpace: "pre",
+                            fontSize: `${fontPx}px`,
+                            letterSpacing: "inherit",
+                            lineHeight: uppOverlayTypography.lineHeight,
+                          }}
+                          // eslint-disable-next-line react/no-danger -- highlightPlainStringToInnerHtml kaçışlı çıktı üretir
+                          dangerouslySetInnerHTML={{
+                            __html: highlightPlainStringToInnerHtml(item.str, letterMap),
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
       </Document>
     </div>
   );

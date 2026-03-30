@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import FixedBackButton from "../components/FixedBackButton.jsx";
 import DocumentKebabMenu from "../components/DocumentKebabMenu.jsx";
-import WordLikeWorkbench from "../components/WordLikeWorkbench.jsx";
+import ReadingMode, {
+  pushReadingFileLoadError,
+} from "../components/ReadingMode.jsx";
 import LoadingSpinner from "../components/LoadingSpinner.jsx";
 import { canBrowserGoBack } from "../utils/historyNav.js";
 import mammoth from "mammoth";
@@ -19,12 +21,14 @@ import { turkishPdfUserMessage } from "../lib/pdfLoadMessages.js";
 import {
   encodePdfArrayBufferToStoredContent,
   isPdfStoredContent,
+  readBlobAsArrayBuffer,
 } from "../lib/readingPdfStorage.js";
 import { getUpp } from "../utils/storage.js";
 import {
   appendReadingHistoryEntry,
   getReadingHistory,
   previewFromContent,
+  removeReadingHistoryEntry,
   titleFromTextSnippet,
 } from "../utils/readingHistory.js";
 
@@ -57,6 +61,8 @@ export default function ReadingPage() {
     if (canBrowserGoBack()) navigate(-1);
     else navigate("/");
   }, [navigate]);
+
+  const backToReadingList = useCallback(() => setScreen("list"), []);
   const fileInputRef = useRef(null);
 
   const [screen, setScreen] = useState(/** @type {'list' | 'reading'} */ ("list"));
@@ -154,11 +160,17 @@ export default function ReadingPage() {
             size: file.size,
             max: MAX_UPLOAD_BYTES,
           });
-          setLoadError("Dosya çok büyük, 10MB altı dosya yükleyin");
+          pushReadingFileLoadError(
+            "Dosya çok büyük, 10MB altı dosya yükleyin",
+            file.name
+          );
           return;
         }
 
-        const arrayBuffer = await file.arrayBuffer();
+        const arrayBuffer =
+          kind === "pdf"
+            ? await readBlobAsArrayBuffer(file)
+            : await file.arrayBuffer();
 
         let content = "";
         /** @type {string | null} */
@@ -174,7 +186,7 @@ export default function ReadingPage() {
               reason: probed.reason,
               message: msg,
             });
-            setLoadError(msg);
+            pushReadingFileLoadError(msg, file.name);
             retryLoadRef.current = { kind, file };
             setShowRetryButton(true);
             return;
@@ -186,7 +198,7 @@ export default function ReadingPage() {
               fileName: file.name,
               encodedLen: encoded?.length,
             });
-            setLoadError(turkishPdfUserMessage("empty"));
+            pushReadingFileLoadError(turkishPdfUserMessage("empty"), file.name);
             retryLoadRef.current = { kind, file };
             setShowRetryButton(true);
             return;
@@ -200,7 +212,10 @@ export default function ReadingPage() {
             console.error("[ReadingPage] Eski .doc biçimi algılandı", {
               fileName: file.name,
             });
-            setLoadError("Lütfen .docx formatında yükleyin");
+            pushReadingFileLoadError(
+              "Lütfen .docx formatında yükleyin",
+              file.name
+            );
             return;
           }
 
@@ -218,7 +233,7 @@ export default function ReadingPage() {
               message: /** @type {Error} */ (mErr)?.message,
               stack: /** @type {Error} */ (mErr)?.stack,
             });
-            setLoadError(DOCX_FAIL_MSG);
+            pushReadingFileLoadError(DOCX_FAIL_MSG, file.name);
             retryLoadRef.current = { kind, file };
             setShowRetryButton(true);
             return;
@@ -229,7 +244,7 @@ export default function ReadingPage() {
             console.error("[ReadingPage] DOCX boş HTML çıktısı", {
               fileName: file.name,
             });
-            setLoadError(DOCX_FAIL_MSG);
+            pushReadingFileLoadError(DOCX_FAIL_MSG, file.name);
             retryLoadRef.current = { kind, file };
             setShowRetryButton(true);
             return;
@@ -264,11 +279,14 @@ export default function ReadingPage() {
             kind,
             contentLength: content?.length,
           });
-          setLoadError(
-            kind === "pdf"
-              ? turkishPdfUserMessage("invalid")
-              : DOCX_FAIL_MSG
-          );
+          if (kind === "pdf") {
+            pushReadingFileLoadError(
+              turkishPdfUserMessage("invalid"),
+              file.name
+            );
+          } else {
+            pushReadingFileLoadError(DOCX_FAIL_MSG, file.name);
+          }
           retryLoadRef.current = { kind, file };
           setShowRetryButton(true);
         }
@@ -280,9 +298,14 @@ export default function ReadingPage() {
           message: /** @type {Error} */ (e)?.message,
           stack: /** @type {Error} */ (e)?.stack,
         });
-        setLoadError(
-          kind === "pdf" ? turkishPdfUserMessage("invalid") : DOCX_FAIL_MSG
-        );
+        if (kind === "pdf") {
+          pushReadingFileLoadError(
+            turkishPdfUserMessage("invalid"),
+            file.name
+          );
+        } else {
+          pushReadingFileLoadError(DOCX_FAIL_MSG, file.name);
+        }
         retryLoadRef.current = { kind, file };
         setShowRetryButton(true);
       } finally {
@@ -298,18 +321,22 @@ export default function ReadingPage() {
       e.target.value = "";
       if (!file) return;
 
+      const lower = file.name.toLowerCase();
+
       if (file.size > MAX_UPLOAD_BYTES) {
         console.error("[ReadingPage] Dosya çok büyük (seçim)", {
           name: file.name,
           size: file.size,
         });
-        setLoadError("Dosya çok büyük, 10MB altı dosya yükleyin");
+        pushReadingFileLoadError(
+          "Dosya çok büyük, 10MB altı dosya yükleyin",
+          file.name
+        );
         setShowRetryButton(false);
         retryLoadRef.current = null;
         return;
       }
 
-      const lower = file.name.toLowerCase();
       if (lower.endsWith(".docx")) {
         runLoadFile("docx", file);
       } else if (lower.endsWith(".pdf")) {
@@ -318,12 +345,18 @@ export default function ReadingPage() {
         console.error("[ReadingPage] .doc uzantısı reddedildi", {
           name: file.name,
         });
-        setLoadError("Lütfen .docx formatında yükleyin");
+        pushReadingFileLoadError(
+          "Lütfen .docx formatında yükleyin",
+          file.name
+        );
         setShowRetryButton(false);
         retryLoadRef.current = null;
       } else {
         console.error("[ReadingPage] Geçersiz dosya türü", { name: file.name });
-        setLoadError("Lütfen PDF veya DOCX dosyası seçin.");
+        pushReadingFileLoadError(
+          "Lütfen PDF veya DOCX dosyası seçin.",
+          file.name
+        );
         setShowRetryButton(false);
         retryLoadRef.current = null;
       }
@@ -396,26 +429,21 @@ export default function ReadingPage() {
 
   if (screen === "reading" && activeDocId) {
     return (
-      <>
-        <FixedBackButton
-          onClick={() => setScreen("list")}
-          aria-label="Belgeler listesine dön"
-        />
-        <WordLikeWorkbench
-          key={activeDocId}
-          upp={upp}
-          mode="reading"
-          initialTitle={activeTitle}
-          initialBody={sourceText}
-          compareOriginalBody={activeDoc?.originalContent ?? null}
-          colorizePlainOnLoad={
-            !isPdfStoredContent(sourceText) && !isProbablyHtml(sourceText)
-          }
-          readingDocKind={activeDoc?.kind === "pdf" ? "pdf" : undefined}
-          documentId={activeDocId}
-          onReadingSaved={handleReadingSaved}
-        />
-      </>
+      <ReadingMode
+        key={activeDocId}
+        upp={upp}
+        mode="reading"
+        initialTitle={activeTitle}
+        initialBody={sourceText}
+        compareOriginalBody={activeDoc?.originalContent ?? null}
+        colorizePlainOnLoad={
+          !isPdfStoredContent(sourceText) && !isProbablyHtml(sourceText)
+        }
+        readingDocKind={activeDoc?.kind === "pdf" ? "pdf" : undefined}
+        documentId={activeDocId}
+        onReadingSaved={handleReadingSaved}
+        onBackToDocuments={backToReadingList}
+      />
     );
   }
 
@@ -444,6 +472,22 @@ export default function ReadingPage() {
               Tekrar Dene
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {showRetryButton && !loadError ? (
+        <div
+          className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
+          role="alert"
+        >
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleRetryLoad}
+            className="rounded-lg bg-red-900 px-3 py-2 text-xs font-semibold text-white hover:bg-red-950 disabled:opacity-50"
+          >
+            Tekrar Dene
+          </button>
         </div>
       ) : null}
 

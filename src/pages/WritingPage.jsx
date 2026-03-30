@@ -122,19 +122,18 @@ export default function WritingPage() {
 
   if (screen === "editor") {
     return (
-      <>
-        <FixedBackButton onClick={backToList} aria-label="Kayıtlı belgelere dön" />
-        <WordLikeWorkbench
-          key={activeWritingId ?? "writing-new"}
-          upp={upp}
-          mode="writing"
-          initialTitle={activeDoc?.title ?? "Adsız belge"}
-          initialBody={activeDoc?.html ?? ""}
-          colorizePlainOnLoad={false}
-          writingDocumentId={activeWritingId}
-          onWritingDocumentCommitted={handleWritingCommitted}
-        />
-      </>
+      <WordLikeWorkbench
+        key={activeWritingId ?? "writing-new"}
+        upp={upp}
+        mode="writing"
+        initialTitle={activeDoc?.title ?? "Adsız belge"}
+        initialBody={activeDoc?.html ?? ""}
+        colorizePlainOnLoad={false}
+        writingDocumentId={activeWritingId}
+        onWritingDocumentCommitted={handleWritingCommitted}
+        onNavigateBack={backToList}
+        navigateBackAriaLabel="Kayıtlı belgelere dön"
+      />
     );
   }
 

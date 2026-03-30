@@ -13,7 +13,9 @@ export async function probePdfBuffer(arrayBuffer) {
     return { ok: false, reason: /** @type {const} */ ("empty") };
   }
 
-  const task = getDocument({ data: arrayBuffer });
+  // pdf.js worker veriyi aktarabilir; aynı tamponu saklamak için kopya ver.
+  const data = arrayBuffer.slice(0);
+  const task = getDocument({ data });
   try {
     const pdf = await task.promise;
     const numPages = pdf.numPages;

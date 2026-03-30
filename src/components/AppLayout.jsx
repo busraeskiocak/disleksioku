@@ -1,6 +1,9 @@
+import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import FixedBackButton from "./FixedBackButton.jsx";
 import { canBrowserGoBack } from "../utils/historyNav.js";
+
+const LEXI_EMBED_TOP_CHROME = "lexi-embed-top-chrome";
 
 function UserProfileIcon({ className }) {
   return (
@@ -25,7 +28,15 @@ function UserProfileIcon({ className }) {
 export default function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
+  const [embedTopChrome, setEmbedTopChrome] = useState(false);
   const onProfile = location.pathname === "/profil";
+
+  useEffect(() => {
+    const onEmbed = (e) =>
+      setEmbedTopChrome(Boolean(/** @type {CustomEvent} */ (e).detail?.embedded));
+    window.addEventListener(LEXI_EMBED_TOP_CHROME, onEmbed);
+    return () => window.removeEventListener(LEXI_EMBED_TOP_CHROME, onEmbed);
+  }, []);
 
   const showFixedBack =
     location.pathname !== "/" && location.pathname !== "/okuma";
@@ -53,21 +64,23 @@ export default function AppLayout() {
     <div
       className={`font-sans flex min-h-screen min-w-0 flex-col ${reserveTopChrome ? "pt-14" : ""}`}
     >
-      {showFixedBack ? (
+      {showFixedBack && !embedTopChrome ? (
         <FixedBackButton onClick={handleFixedBack} aria-label="Geri" />
       ) : null}
-      <div className="pointer-events-none fixed right-0 top-0 z-[100] flex justify-end p-3 sm:p-4">
-        <button
-          type="button"
-          onClick={handleProfileIconClick}
-          className="pointer-events-auto flex size-11 items-center justify-center rounded-full border-2 border-stone-200 bg-white/95 text-stone-600 shadow-sm backdrop-blur-sm transition hover:border-emerald-600 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
-          aria-label={
-            onProfile ? "Önceki sayfaya dön" : "Profil sayfasına git"
-          }
-        >
-          <UserProfileIcon className="size-6" />
-        </button>
-      </div>
+      {!embedTopChrome ? (
+        <div className="pointer-events-none fixed right-0 top-0 z-[100] flex justify-end p-3 sm:p-4">
+          <button
+            type="button"
+            onClick={handleProfileIconClick}
+            className="pointer-events-auto flex size-11 items-center justify-center rounded-full border-2 border-stone-200 bg-white/95 text-stone-600 shadow-sm backdrop-blur-sm transition hover:border-emerald-600 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 focus-visible:ring-offset-2"
+            aria-label={
+              onProfile ? "Önceki sayfaya dön" : "Profil sayfasına git"
+            }
+          >
+            <UserProfileIcon className="size-6" />
+          </button>
+        </div>
+      ) : null}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Outlet />
       </div>
