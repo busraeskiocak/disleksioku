@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { QRCodeSVG } from "qrcode.react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import {
@@ -24,8 +23,6 @@ import { getUpp, setUpp } from "../utils/storage.js";
 
 export default function SharePage() {
   const [searchParams] = useSearchParams();
-  const qrRef = useRef(null);
-  const [copyState, setCopyState] = useState("idle");
   const [saveState, setSaveState] = useState("idle");
   const [pdfState, setPdfState] = useState("idle");
   const chartBarRef = useRef(null);
@@ -48,46 +45,6 @@ export default function SharePage() {
       : linkUpp && looksLikeUpp(linkUpp)
         ? linkUpp
         : null;
-  const [shareId, setShareId] = useState("");
-
-  useEffect(() => {
-    if (!uppForShare || typeof uppForShare !== "object") {
-      setShareId("");
-      return;
-    }
-    const existingId =
-      typeof uppForShare.id === "string" && uppForShare.id.trim()
-        ? uppForShare.id.trim()
-        : "";
-    if (existingId) {
-      setShareId(existingId);
-      return;
-    }
-    const generatedId = String(Date.now());
-    setShareId(generatedId);
-    setUpp({ ...uppForShare, id: generatedId });
-  }, [uppForShare]);
-
-  const shareUrl = (() => {
-    if (!shareId) {
-      console.log("[SharePage] shareId boş, kısa URL üretilemedi.");
-      return "";
-    }
-    try {
-      const baseUrl =
-        typeof window !== "undefined" && window.location?.origin
-          ? window.location.origin
-          : "";
-      const url = `${baseUrl}/paylasim?id=${encodeURIComponent(shareId)}`;
-      console.log("[SharePage] QR için üretilecek URL:", url);
-      return url;
-    } catch (err) {
-      console.log("[SharePage] Kısa URL üretim hatası:", err);
-      return "";
-    }
-  })();
-  console.log("[SharePage] qrcode.react import kontrolü QRCodeSVG:", Boolean(QRCodeSVG));
-  console.log("[SharePage] QRCode value kontrolü shareUrl:", shareUrl);
 
   const showImport =
     Boolean(linkUpp && looksLikeUpp(linkUpp)) &&
@@ -153,41 +110,6 @@ export default function SharePage() {
     typeof uppForShare?.typography?.letterSpacingEm === "number"
       ? `${uppForShare.typography.letterSpacingEm}em`
       : "Belirtilmedi";
-
-  const copyLink = useCallback(async () => {
-    if (!shareUrl) return;
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopyState("ok");
-      setTimeout(() => setCopyState("idle"), 2000);
-    } catch {
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = shareUrl;
-        ta.style.position = "fixed";
-        ta.style.left = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-        setCopyState("ok");
-        setTimeout(() => setCopyState("idle"), 2000);
-      } catch {
-        setCopyState("fail");
-        setTimeout(() => setCopyState("idle"), 2500);
-      }
-    }
-  }, [shareUrl]);
-
-  const downloadQr = useCallback(() => {
-    const canvas = qrRef.current;
-    if (!canvas) return;
-    const dataUrl = canvas.toDataURL("image/png");
-    const a = document.createElement("a");
-    a.href = dataUrl;
-    a.download = "lexilens-profil-qr.png";
-    a.click();
-  }, []);
 
   const saveImported = useCallback(() => {
     if (!linkUpp || !looksLikeUpp(linkUpp)) return;
@@ -355,53 +277,6 @@ export default function SharePage() {
           ) : null}
         </div>
       ) : null}
-
-      <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-semibold text-stone-800">Bağlantı</h2>
-        <p className="mt-2 break-all rounded-xl bg-stone-100 px-3 py-2 text-xs text-stone-800 sm:text-sm">
-          {shareUrl}
-        </p>
-        <button
-          type="button"
-          onClick={copyLink}
-          disabled={!shareUrl}
-          className="mt-4 w-full rounded-xl bg-emerald-700 px-4 py-3 text-base font-semibold text-white shadow-sm disabled:bg-stone-300"
-        >
-          {copyState === "ok"
-            ? "Kopyalandı!"
-            : copyState === "fail"
-              ? "Kopyalanamadı — tekrar deneyin"
-              : "Bağlantıyı kopyala"}
-        </button>
-      </div>
-
-      <div className="mt-6 rounded-2xl border border-stone-200 bg-white p-5 text-center shadow-sm">
-        <h2 className="text-sm font-semibold text-stone-800">QR kod</h2>
-        <p className="mt-1 text-xs text-stone-600">
-          Telefonla taratarak aynı bağlantıya gidebilirsiniz.
-        </p>
-        <div className="mt-4 inline-block rounded-xl border border-stone-200 bg-white p-3">
-          {shareUrl?.trim() ? (
-            <QRCodeSVG
-              ref={qrRef}
-              value={shareUrl}
-              size={220}
-              level="M"
-              includeMargin
-              bgColor="#ffffff"
-              fgColor="#14532d"
-            />
-          ) : null}
-        </div>
-        <button
-          type="button"
-          onClick={downloadQr}
-          disabled={!shareUrl}
-          className="mt-4 w-full rounded-xl border-2 border-emerald-800/40 bg-white px-4 py-3 text-base font-semibold text-emerald-900 disabled:border-stone-200 disabled:text-stone-400"
-        >
-          QR kodu indir
-        </button>
-      </div>
 
       <div className="mt-8 flex flex-col gap-2 text-sm text-stone-600">
         <Link

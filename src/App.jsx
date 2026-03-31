@@ -4,7 +4,6 @@ import CalibrationPage from "./pages/CalibrationPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
 import ReadingPage from "./pages/ReadingPage.jsx";
 import WritingPage from "./pages/WritingPage.jsx";
-import SharePage from "./pages/SharePage.jsx";
 import AppLayout from "./components/AppLayout.jsx";
 import KelimeTarayici from "./components/KelimeTarayici.jsx";
 
@@ -76,7 +75,6 @@ export default function App() {
               </>
             }
           />
-          <Route path="/paylasim" element={<SharePage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

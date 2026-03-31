@@ -573,12 +573,6 @@ export default function ProfilePage() {
         >
           Okumaya Başla
         </Link>
-        <Link
-          to="/paylasim"
-          className="inline-flex flex-1 justify-center rounded-2xl border-2 border-emerald-800/40 bg-white px-5 py-4 text-center text-lg font-semibold text-emerald-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-800 focus-visible:ring-offset-2"
-        >
-          Profili Paylaş
-        </Link>
       </div>
 
       <Link
