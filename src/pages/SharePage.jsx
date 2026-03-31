@@ -74,11 +74,11 @@ export default function SharePage() {
       return "";
     }
     try {
-      const origin =
+      const baseUrl =
         typeof window !== "undefined" && window.location?.origin
           ? window.location.origin
           : "";
-      const url = `${origin}/paylasim?id=${encodeURIComponent(shareId)}`;
+      const url = `${baseUrl}/paylasim?id=${encodeURIComponent(shareId)}`;
       console.log("[SharePage] QR için üretilecek URL:", url);
       return url;
     } catch (err) {
