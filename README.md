@@ -6,7 +6,7 @@ Disleksili öğrenciler için AI destekli kişiselleştirilmiş okuma aracı.
 https://lexilens-six.vercel.app
 
 ## 📹 Demo Video
-[Yakında eklenecek]
+https://www.loom.com/share/f327c3500bf24c0e813bc6ecb421ebda
 
 ## 💡 Problem
 Mevcut disleksi araçları herkese aynı çözümü sunuyor. LexiLens, kullanıcının okuma paternini analiz ederek kişisel bir profil oluşturuyor ve belgeleri o profile göre kişiselleştiriyor.
